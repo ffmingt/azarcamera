@@ -6,7 +6,8 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v3
+      # 更新 checkout 到 v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
 
@@ -24,7 +25,8 @@ jobs:
           make package FINALPACKAGE=1
 
       - name: Upload Deb
-        uses: actions/upload-artifact@v3
+        # 這裡就是報錯的原因，已經修正為 v4
+        uses: actions/upload-artifact@v4
         with:
           name: AzarMagicButton_DEB
           path: packages/*.deb
