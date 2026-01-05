@@ -2,22 +2,17 @@
 #import <AVFoundation/AVFoundation.h>
 
 // ---------------------------------------------------------
-// 1. 宣告與欺騙編譯器 (Fix Forward Declaration Error)
+// 1. 宣告與欺騙編譯器
 // ---------------------------------------------------------
-
-// 告訴編譯器：Azar 的介面是 UIViewController
 @interface AzarMain_MirrorViewController : UIViewController
 @end
 
-// 🔥 關鍵修正：告訴編譯器這些廣告元件是 UIView
-// 這樣編譯器就會允許使用 setHidden, removeFromSuperview 等方法
 @interface GADBannerView : UIView
 @end
 
 @interface FBAdView : UIView
 @end
 
-// 插頁廣告通常是 NSObject
 @interface GADInterstitial : NSObject
 @end
 
@@ -28,45 +23,75 @@ static BOOL useRearCamera = NO;
 static AVCaptureSession *currentSession = nil;
 
 // ---------------------------------------------------------
-// 3. 通用去廣告模組 (AdBlock)
+// 3. UI 層去廣告 (視覺隱藏)
 // ---------------------------------------------------------
-
-// 攔截 Google AdMob (橫幅)
 %hook GADBannerView
 - (void)didMoveToWindow {
     %orig;
     if (self.superview) {
         [self setHidden:YES];
-        [self setAlpha:0];
         [self removeFromSuperview];
     }
 }
-- (CGSize)intrinsicContentSize {
-    return CGSizeZero;
-}
+- (CGSize)intrinsicContentSize { return CGSizeZero; }
 %end
 
-// 攔截 Google 插頁廣告
 %hook GADInterstitial
-- (void)presentFromRootViewController:(id)vc {
-    return; // 直接攔截，不讓它彈出來
-}
+- (void)presentFromRootViewController:(id)vc { return; }
 %end
 
-// 攔截 Facebook 廣告
 %hook FBAdView
 - (void)didMoveToWindow {
     %orig;
     [self setHidden:YES];
     [self removeFromSuperview];
 }
-- (CGSize)intrinsicContentSize {
-    return CGSizeZero;
-}
+- (CGSize)intrinsicContentSize { return CGSizeZero; }
 %end
 
 // ---------------------------------------------------------
-// 4. 核心邏輯：相機攔截
+// 4. 🔥 網路層去廣告 (模擬 Hosts 阻擋)
+//    這是最底層的攔截，直接讓 App 連不上廣告伺服器
+// ---------------------------------------------------------
+%hook NSMutableURLRequest
+
+- (void)setURL:(NSURL *)url {
+    NSString *urlStr = [url absoluteString];
+    
+    // 定義廣告關鍵字黑名單
+    NSArray *blockKeywords = @[
+        @"googleads",
+        @"doubleclick",
+        @"admob",
+        @"facebook.com/ad",
+        @"audience_network",
+        @"applovin",
+        @"unity3d.com/ads"
+    ];
+    
+    BOOL isAd = NO;
+    for (NSString *keyword in blockKeywords) {
+        if ([urlStr rangeOfString:keyword options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            isAd = YES;
+            break;
+        }
+    }
+    
+    if (isAd) {
+        // 如果發現是廣告，就把網址改成 127.0.0.1 (本機)，讓請求失敗
+        NSLog(@"[AzarHack] 🛡️ 已攔截廣告請求: %@", urlStr);
+        NSURL *blockedURL = [NSURL URLWithString:@"http://127.0.0.1"];
+        %orig(blockedURL);
+    } else {
+        // 正常的請求，放行
+        %orig(url);
+    }
+}
+
+%end
+
+// ---------------------------------------------------------
+// 5. 核心邏輯：相機攔截
 // ---------------------------------------------------------
 %hook AVCaptureSession
 - (void)startRunning {
@@ -92,7 +117,7 @@ static AVCaptureSession *currentSession = nil;
 %end
 
 // ---------------------------------------------------------
-// 5. UI 邏輯：懸浮按鈕
+// 6. UI 邏輯：懸浮按鈕
 // ---------------------------------------------------------
 %hook AzarMain_MirrorViewController
 
