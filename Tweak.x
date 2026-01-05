@@ -8,33 +8,72 @@
 @interface AzarMain_MirrorViewController : UIViewController
 @end
 
+// 宣告廣告類別 (避免編譯報錯)
+@interface UIView (AdBlock)
+@end
+
 // 全域開關
 static BOOL useRearCamera = NO; 
-// 抓取目前正在運作的相機 Session
 static AVCaptureSession *currentSession = nil;
 
-// ---------------------------------------------------------
-// 2. 綁架相機 Session (為了熱切換)
-// ---------------------------------------------------------
-%hook AVCaptureSession
+// ==========================================
+// 🔥 新增：通用去廣告模組 (AdBlock)
+// ==========================================
 
+// 1. 攔截 Google AdMob (橫幅廣告)
+%hook GADBannerView
+- (void)didMoveToWindow {
+    %orig;
+    if (self.superview) {
+        [self setHidden:YES];       // 隱藏
+        [self setAlpha:0];          // 透明
+        [self removeFromSuperview]; // 移除
+        NSLog(@"[AzarHack] 已移除一個 Google 廣告");
+    }
+}
+// 讓廣告的高度變為 0 (避免留白)
+- (CGSize)intrinsicContentSize {
+    return CGSizeZero;
+}
+%end
+
+// 2. 攔截 Google 插頁廣告 (全螢幕彈窗)
+%hook GADInterstitial
+- (void)presentFromRootViewController:(id)vc {
+    // 直接無視，不讓它彈出來
+    NSLog(@"[AzarHack] 已攔截一個 Google 彈窗廣告");
+    return;
+}
+%end
+
+// 3. 攔截 Facebook 廣告 (FBAdView)
+%hook FBAdView
+- (void)didMoveToWindow {
+    %orig;
+    [self setHidden:YES];
+    [self removeFromSuperview];
+    NSLog(@"[AzarHack] 已移除一個 Facebook 廣告");
+}
+- (CGSize)intrinsicContentSize {
+    return CGSizeZero;
+}
+%end
+
+// ==========================================
+// 📷 核心邏輯：相機攔截 (保持不變)
+// ==========================================
+%hook AVCaptureSession
 - (void)startRunning {
     currentSession = self;
     %orig;
 }
-
 - (void)addInput:(AVCaptureInput *)input {
     currentSession = self;
     %orig;
 }
-
 %end
 
-// ---------------------------------------------------------
-// 3. 攔截輸入 (底層替換)
-// ---------------------------------------------------------
 %hook AVCaptureDeviceInput
-
 + (instancetype)deviceInputWithDevice:(AVCaptureDevice *)device error:(NSError **)outError {
     if (useRearCamera && device.position == AVCaptureDevicePositionFront) {
         AVCaptureDevice *backCamera = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera 
@@ -44,12 +83,11 @@ static AVCaptureSession *currentSession = nil;
     }
     return %orig;
 }
-
 %end
 
-// ---------------------------------------------------------
-// 4. UI 美化與熱切換邏輯
-// ---------------------------------------------------------
+// ==========================================
+// 🎨 UI 邏輯：懸浮按鈕 (保持不變)
+// ==========================================
 %hook AzarMain_MirrorViewController
 
 -(void)viewDidLoad {
@@ -57,49 +95,38 @@ static AVCaptureSession *currentSession = nil;
 
     UIViewController *controller = (UIViewController *)self;
     
-    // --- 計算位置 (右上角，向下偏移 150px) ---
+    // 位置設定
     CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
-    CGFloat btnSize = 50.0; // 按鈕大小 (圓形)
-    CGFloat margin = 15.0;  // 距離右邊邊緣的距離
-    
-    // 🔥 修改點：這裡改成 150.0
+    CGFloat btnSize = 50.0;
+    CGFloat margin = 15.0;
     CGFloat topOffset = 150.0; 
     
     // 建立按鈕
     UIButton *magicBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     magicBtn.frame = CGRectMake(screenWidth - btnSize - margin, topOffset, btnSize, btnSize);
     
-    // --- 🎨 UI 美化 ---
-    // 1. 半透明深色背景
+    // UI 美化
     magicBtn.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.7]; 
-    
-    // 2. 圓形與邊框
     magicBtn.layer.cornerRadius = btnSize / 2.0;
     magicBtn.layer.borderWidth = 1.5;
     magicBtn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.6].CGColor;
-    
-    // 3. 陰影效果
     magicBtn.layer.shadowColor = [UIColor blackColor].CGColor;
     magicBtn.layer.shadowOffset = CGSizeMake(0, 3);
     magicBtn.layer.shadowOpacity = 0.4;
     magicBtn.layer.shadowRadius = 4.0;
     magicBtn.layer.masksToBounds = NO;
     
-    // 4. 初始圖示
     [magicBtn setTitle:@"🤳" forState:UIControlStateNormal];
-    magicBtn.titleLabel.font = [UIFont systemFontOfSize:24]; // Emoji 大小
+    magicBtn.titleLabel.font = [UIFont systemFontOfSize:24];
     
-    // --- 事件綁定 ---
     [magicBtn addTarget:self action:@selector(toggleCameraMode:) forControlEvents:UIControlEventTouchUpInside];
 
-    // 拖曳手勢
     UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
     [magicBtn addGestureRecognizer:panGesture];
 
     [controller.view addSubview:magicBtn];
 }
 
-// 處理拖曳
 %new
 -(void)handlePan:(UIPanGestureRecognizer *)sender {
     UIViewController *controller = (UIViewController *)self;
@@ -109,16 +136,13 @@ static AVCaptureSession *currentSession = nil;
     [sender setTranslation:CGPointZero inView:controller.view];
 }
 
-// 處理點擊 (熱切換 + UI 變化)
 %new
 -(void)toggleCameraMode:(UIButton *)sender {
     useRearCamera = !useRearCamera;
 
-    // --- 更新 UI 狀態 ---
     if (useRearCamera) {
-        // 開啟後置
         [UIView animateWithDuration:0.2 animations:^{
-            sender.backgroundColor = [UIColor colorWithRed:0.0 green:0.8 blue:0.4 alpha:0.8]; // 綠色
+            sender.backgroundColor = [UIColor colorWithRed:0.0 green:0.8 blue:0.4 alpha:0.8];
             sender.layer.borderColor = [UIColor whiteColor].CGColor;
             sender.transform = CGAffineTransformMakeScale(1.1, 1.1);
         } completion:^(BOOL finished) {
@@ -129,7 +153,6 @@ static AVCaptureSession *currentSession = nil;
         [sender setTitle:@"📸" forState:UIControlStateNormal];
         
     } else {
-        // 切回前置
         [UIView animateWithDuration:0.2 animations:^{
             sender.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.7];
             sender.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.6].CGColor;
@@ -142,7 +165,6 @@ static AVCaptureSession *currentSession = nil;
         [sender setTitle:@"🤳" forState:UIControlStateNormal];
     }
 
-    // --- 執行熱切換手術 ---
     if (currentSession) {
         [currentSession beginConfiguration];
         for (AVCaptureInput *input in currentSession.inputs) {
@@ -173,4 +195,6 @@ static AVCaptureSession *currentSession = nil;
 
 %ctor {
     %init(AzarMain_MirrorViewController = objc_getClass("AzarMain.MirrorViewController"));
+    // 初始化廣告相關的 Hook (這裡使用 %init 自動處理，如果類別存在就會 Hook，不存在就跳過，不會閃退)
+    %init;
 }
