@@ -1,0 +1,8 @@
+Package: com.hacker.azarmagicbutton
+Name: Azar Magic Button
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Adds a floating button to toggle Rear Camera
+Maintainer: You
+Author: You
+Section: Tweaks
