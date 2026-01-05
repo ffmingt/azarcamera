@@ -10,6 +10,13 @@ jobs:
         with:
           submodules: recursive
 
+      # 修正 1: 安裝 ldid 簽名工具
+      # 這是解決 "ldid: command not found" 的關鍵
+      - name: Install Dependencies
+        run: |
+          brew install ldid
+          brew install make
+
       - name: Install Theos
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
@@ -17,17 +24,15 @@ jobs:
 
       - name: Get iOS SDK
         run: |
-          # 修正 1: 強制刪除 Theos 自動建立的空資料夾，解決 "already exists" 錯誤
+          # 清除舊 SDK 避免衝突
           rm -rf $HOME/theos/sdks
-          
-          # 修正 2: 使用官方 Theos SDK 倉庫 (輕量且支援 Xcode 16)
-          # 使用 --depth 1 只下載最新版，速度最快
+          # 下載官方 SDK
           git clone --depth 1 https://github.com/theos/sdks.git $HOME/theos/sdks
 
       - name: Build Package
         run: |
-          # 修正 3: 明確指定使用 SDK 16.5 (倉庫裡最新的穩定版)
-          # 這樣可以避開 Xcode 16 編譯舊版 SDK 的錯誤
+          # 開始編譯
+          # 這裡會使用剛安裝好的 ldid 進行簽名
           make package FINALPACKAGE=1 TARGET=iphone:clang:16.5:14.0 THEOS_PACKAGE_SCHEME=rootless
 
       - name: Upload Deb
