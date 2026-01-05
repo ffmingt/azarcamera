@@ -1,8 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 
-// --- 修正點：明確告訴編譯器，這個類別繼承自 UIViewController ---
-// 這樣編譯器就知道它一定有 .view 屬性，不會報錯了
+// 宣告我们要 Hook 的类 (讓編譯器知道它的存在)
 @interface AzarMain_MirrorViewController : UIViewController
 @end
 
@@ -45,9 +44,10 @@ static BOOL useRearCamera = NO; // 預設關閉 (使用正常前置)
     // 設定點擊事件
     [magicBtn addTarget:self action:@selector(toggleCameraMode:) forControlEvents:UIControlEventTouchUpInside];
 
-    // 把按鈕加到畫面上
-    // 因為最上面宣告了 interface，這裡編譯器就能識別 self.view 了
-    [self.view addSubview:magicBtn];
+    // --- 關鍵修正：強制告訴編譯器 self 是 UIViewController ---
+    // 這樣它就一定找得到 .view 屬性了
+    UIViewController *controller = (UIViewController *)self;
+    [controller.view addSubview:magicBtn];
 }
 
 // 新增按鈕點擊後的動作
@@ -66,7 +66,10 @@ static BOOL useRearCamera = NO; // 預設關閉 (使用正常前置)
                                                                        message:@"請重新進入視訊聊天，或點擊兩下畫面來刷新攝像頭。" 
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
+        
+        // --- 這裡也一樣，為了安全起見，強制轉型後再 Present ---
+        UIViewController *controller = (UIViewController *)self;
+        [controller presentViewController:alert animated:YES completion:nil];
         
     } else {
         sender.backgroundColor = [UIColor redColor]; // 紅色代表關閉 (前置)
