@@ -51,22 +51,16 @@ static AVCaptureSession *currentSession = nil;
 
 // ---------------------------------------------------------
 // 4. 🔥 網路層去廣告 (模擬 Hosts 阻擋)
-//    這是最底層的攔截，直接讓 App 連不上廣告伺服器
 // ---------------------------------------------------------
 %hook NSMutableURLRequest
 
 - (void)setURL:(NSURL *)url {
     NSString *urlStr = [url absoluteString];
     
-    // 定義廣告關鍵字黑名單
     NSArray *blockKeywords = @[
-        @"googleads",
-        @"doubleclick",
-        @"admob",
-        @"facebook.com/ad",
-        @"audience_network",
-        @"applovin",
-        @"unity3d.com/ads"
+        @"googleads", @"doubleclick", @"admob",
+        @"facebook.com/ad", @"audience_network",
+        @"applovin", @"unity3d.com/ads"
     ];
     
     BOOL isAd = NO;
@@ -78,12 +72,9 @@ static AVCaptureSession *currentSession = nil;
     }
     
     if (isAd) {
-        // 如果發現是廣告，就把網址改成 127.0.0.1 (本機)，讓請求失敗
-        NSLog(@"[AzarHack] 🛡️ 已攔截廣告請求: %@", urlStr);
         NSURL *blockedURL = [NSURL URLWithString:@"http://127.0.0.1"];
         %orig(blockedURL);
     } else {
-        // 正常的請求，放行
         %orig(url);
     }
 }
@@ -117,7 +108,7 @@ static AVCaptureSession *currentSession = nil;
 %end
 
 // ---------------------------------------------------------
-// 6. UI 邏輯：懸浮按鈕
+// 6. UI 邏輯：懸浮按鈕 (置頂版)
 // ---------------------------------------------------------
 %hook AzarMain_MirrorViewController
 
@@ -134,15 +125,22 @@ static AVCaptureSession *currentSession = nil;
     UIButton *magicBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     magicBtn.frame = CGRectMake(screenWidth - btnSize - margin, topOffset, btnSize, btnSize);
     
+    // UI 美化
     magicBtn.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.7]; 
     magicBtn.layer.cornerRadius = btnSize / 2.0;
     magicBtn.layer.borderWidth = 1.5;
     magicBtn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.6].CGColor;
+    
+    // 陰影
     magicBtn.layer.shadowColor = [UIColor blackColor].CGColor;
     magicBtn.layer.shadowOffset = CGSizeMake(0, 3);
     magicBtn.layer.shadowOpacity = 0.4;
     magicBtn.layer.shadowRadius = 4.0;
     magicBtn.layer.masksToBounds = NO;
+    
+    // 🔥 關鍵修正：將 Z軸層級設為最大值 (保證永遠在最上層)
+    // 這樣就算 App 後來加了濾鏡層或廣告層，按鈕也會浮在她們上面
+    magicBtn.layer.zPosition = 99999.0;
     
     [magicBtn setTitle:@"🤳" forState:UIControlStateNormal];
     magicBtn.titleLabel.font = [UIFont systemFontOfSize:24];
