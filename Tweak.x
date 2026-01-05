@@ -103,30 +103,24 @@ static UIWindow *floatingWindow = nil;
 %end
 
 // ---------------------------------------------------------
-// 6. UI 邏輯：懸浮按鈕 (永久駐留版)
+// 6. UI 邏輯：懸浮按鈕 (霸道看門狗版)
 // ---------------------------------------------------------
 %hook AzarMain_MirrorViewController
 
-// 只在第一次進入時建立視窗，之後就不會消失了
 -(void)viewDidAppear:(BOOL)animated {
     %orig;
 
-    // 如果視窗已經存在，什麼都不做 (保持它原本的位置和狀態)
-    if (floatingWindow) {
-        return;
-    }
+    if (floatingWindow) return;
 
-    // --- 以下為第一次初始化 ---
+    // --- 初始化視窗 ---
     CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
     CGFloat btnSize = 50.0;
     CGFloat margin = 15.0;
     CGFloat topOffset = 150.0; 
 
-    // 建立上帝視窗
     floatingWindow = [[UIWindow alloc] initWithFrame:CGRectMake(screenWidth - btnSize - margin, topOffset, btnSize, btnSize)];
-    floatingWindow.windowLevel = UIWindowLevelAlert + 2000; // 無敵置頂
     floatingWindow.backgroundColor = [UIColor clearColor];
-    floatingWindow.hidden = NO; // 永遠顯示
+    floatingWindow.hidden = NO;
     
     // 建立按鈕
     UIButton *magicBtn = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -137,11 +131,6 @@ static UIWindow *floatingWindow = nil;
     magicBtn.layer.cornerRadius = btnSize / 2.0;
     magicBtn.layer.borderWidth = 1.5;
     magicBtn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.6].CGColor;
-    magicBtn.layer.shadowColor = [UIColor blackColor].CGColor;
-    magicBtn.layer.shadowOffset = CGSizeMake(0, 3);
-    magicBtn.layer.shadowOpacity = 0.4;
-    magicBtn.layer.shadowRadius = 4.0;
-    magicBtn.layer.masksToBounds = NO;
     
     [magicBtn setTitle:@"🤳" forState:UIControlStateNormal];
     magicBtn.titleLabel.font = [UIFont systemFontOfSize:24];
@@ -152,10 +141,48 @@ static UIWindow *floatingWindow = nil;
     [magicBtn addGestureRecognizer:panGesture];
 
     [floatingWindow addSubview:magicBtn];
+
+    // 🔥 啟動看門狗計時器 (每 1.5 秒檢查一次)
+    [NSTimer scheduledTimerWithTimeInterval:1.5 
+                                     target:self 
+                                   selector:@selector(watchdogCheck) 
+                                   userInfo:nil 
+                                    repeats:YES];
+    
+    // 第一次先強制置頂
+    [self watchdogCheck];
 }
 
-// 🔥 修改點：刪除了 viewWillDisappear 方法
-// 這樣即使你離開了視訊頁面，按鈕依然會留在螢幕上
+// 🔥 看門狗邏輯：誰敢比我高？
+%new
+-(void)watchdogCheck {
+    if (!floatingWindow) return;
+
+    CGFloat maxLevel = 0;
+    
+    // 掃描目前所有存在的視窗
+    NSArray *windows = [UIApplication sharedApplication].windows;
+    for (UIWindow *win in windows) {
+        // 忽略自己，也不要管隱藏的視窗
+        if (win != floatingWindow && !win.hidden) {
+            if (win.windowLevel > maxLevel) {
+                maxLevel = win.windowLevel;
+            }
+        }
+    }
+    
+    // 如果發現有人的層級比我高 (或者跟我一樣)
+    if (floatingWindow.windowLevel <= maxLevel) {
+        // 我就比你高 1 級
+        floatingWindow.windowLevel = maxLevel + 1.0;
+        
+        // 順便確保我是顯示的
+        floatingWindow.hidden = NO;
+        [floatingWindow.superview bringSubviewToFront:floatingWindow];
+        
+        // NSLog(@"[AzarHack] 發現高層級視窗，已自動提升懸浮按鈕層級至: %f", floatingWindow.windowLevel);
+    }
+}
 
 %new
 -(void)handlePan:(UIPanGestureRecognizer *)sender {
@@ -172,7 +199,6 @@ static UIWindow *floatingWindow = nil;
     if (useRearCamera) {
         [UIView animateWithDuration:0.2 animations:^{
             sender.backgroundColor = [UIColor colorWithRed:0.0 green:0.8 blue:0.4 alpha:0.8];
-            sender.layer.borderColor = [UIColor whiteColor].CGColor;
             sender.transform = CGAffineTransformMakeScale(1.1, 1.1);
         } completion:^(BOOL finished) {
             [UIView animateWithDuration:0.1 animations:^{
@@ -183,7 +209,6 @@ static UIWindow *floatingWindow = nil;
     } else {
         [UIView animateWithDuration:0.2 animations:^{
             sender.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.7];
-            sender.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.6].CGColor;
             sender.transform = CGAffineTransformMakeScale(0.9, 0.9);
         } completion:^(BOOL finished) {
             [UIView animateWithDuration:0.1 animations:^{
@@ -193,9 +218,7 @@ static UIWindow *floatingWindow = nil;
         [sender setTitle:@"🤳" forState:UIControlStateNormal];
     }
 
-    // 執行熱切換 (如果當下相機有在運作)
     if (currentSession) {
-        // 防止崩潰檢查：確保 session 正在運行且沒有被銷毀
         @try {
             [currentSession beginConfiguration];
             for (AVCaptureInput *input in currentSession.inputs) {
@@ -206,7 +229,6 @@ static UIWindow *floatingWindow = nil;
                     }
                 }
             }
-            
             AVCaptureDevicePosition targetPos = useRearCamera ? AVCaptureDevicePositionBack : AVCaptureDevicePositionFront;
             AVCaptureDevice *newDevice = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera 
                                                                             mediaType:AVMediaTypeVideo 
@@ -219,9 +241,7 @@ static UIWindow *floatingWindow = nil;
                 }
             }
             [currentSession commitConfiguration];
-        } @catch (NSException *exception) {
-            // 如果在非相機頁面切換，可能會捕捉到異常，這裡忽略它
-        }
+        } @catch (NSException *exception) {}
     }
 }
 
