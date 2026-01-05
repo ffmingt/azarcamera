@@ -1,6 +1,11 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 
+// --- 修正點：明確告訴編譯器，這個類別繼承自 UIViewController ---
+// 這樣編譯器就知道它一定有 .view 屬性，不會報錯了
+@interface AzarMain_MirrorViewController : UIViewController
+@end
+
 // --- 全域變數：紀錄目前是否要強制使用後置鏡頭 ---
 static BOOL useRearCamera = NO; // 預設關閉 (使用正常前置)
 
@@ -23,15 +28,8 @@ static BOOL useRearCamera = NO; // 預設關閉 (使用正常前置)
 
 // --- Part 2: UI 介面 (懸浮按鈕) ---
 
-// 宣告 Swift 類別 (避免編譯錯誤)
-@interface UIViewController (Azar)
-@property (nonatomic, strong) UIView *view;
-@end
-
-// 我們 Hook 你之前找到的那個 MirrorViewController
 %hook AzarMain_MirrorViewController
 
-// 新增一個屬性來存按鈕 (這裡用關聯對象的簡化寫法，直接在 viewDidLoad 建立)
 -(void)viewDidLoad {
     %orig; // 執行原本的程式碼
 
@@ -48,6 +46,7 @@ static BOOL useRearCamera = NO; // 預設關閉 (使用正常前置)
     [magicBtn addTarget:self action:@selector(toggleCameraMode:) forControlEvents:UIControlEventTouchUpInside];
 
     // 把按鈕加到畫面上
+    // 因為最上面宣告了 interface，這裡編譯器就能識別 self.view 了
     [self.view addSubview:magicBtn];
 }
 
