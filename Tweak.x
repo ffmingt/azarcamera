@@ -44,7 +44,7 @@ static UIButton *globalMagicBtn = nil;
 %end
 
 // ---------------------------------------------------------
-// 4. 🔥 網路層去廣告
+// 4. 網路層去廣告
 // ---------------------------------------------------------
 %hook NSMutableURLRequest
 - (void)setURL:(NSURL *)url {
@@ -69,26 +69,45 @@ static UIButton *globalMagicBtn = nil;
 %end
 
 // ---------------------------------------------------------
-// 5. 🔥 核心邏輯：相機攔截與鏡像修正
+// 5. 🔥 核心邏輯：相機與鏡像修正 (雙重鎖定)
 // ---------------------------------------------------------
 
-// 強制攔截鏡像設定：如果 App 試圖設置鏡像，我們要檢查現在是不是後置鏡頭
+// 第一道鎖：鎖定數據流 (AVCaptureConnection)
 %hook AVCaptureConnection
 - (void)setVideoMirrored:(BOOL)mirrored {
+    // 只有當使用後攝像頭時，強制關閉鏡像 (NO)
+    // 如果是前攝像頭，則保持預設 (通常是 YES)
     if (useRearCamera) {
-        // 如果正在用後攝像頭，強制關閉鏡像 (讓畫面變正)
         %orig(NO);
     } else {
-        // 如果是前攝像頭，保持原樣 (通常是 YES)
-        %orig(mirrored);
+        %orig(YES);
     }
 }
-// 防止 App 讀取狀態時錯亂，也一併欺騙 Getter
 - (BOOL)isVideoMirrored {
-    if (useRearCamera) {
-        return NO;
-    }
+    if (useRearCamera) return NO;
     return %orig;
+}
+%end
+
+// 🔥 第二道鎖：鎖定預覽層 (AVCaptureVideoPreviewLayer)
+// 這是你自己看到的畫面，必須強制修正
+%hook AVCaptureVideoPreviewLayer
+- (void)setSession:(AVCaptureSession *)session {
+    %orig;
+    // 當 Session 改變時，立即檢查並修正鏡像
+    if (self.connection.isVideoMirroringSupported) {
+        self.connection.videoMirrored = !useRearCamera;
+    }
+}
+
+// 當畫面佈局刷新時，再次強制修正 (防止 App 偷偷改回來)
+- (void)layoutSubviews {
+    %orig;
+    if (self.connection.isVideoMirroringSupported) {
+        // 後攝像頭 -> NO (不鏡像)
+        // 前攝像頭 -> YES (鏡像)
+        self.connection.videoMirrored = !useRearCamera;
+    }
 }
 %end
 
@@ -110,7 +129,7 @@ static UIButton *globalMagicBtn = nil;
 %end
 
 // ---------------------------------------------------------
-// 6. UI 邏輯：寄生置頂版
+// 6. UI 邏輯：懸浮按鈕 (寄生置頂版)
 // ---------------------------------------------------------
 %hook AzarMain_MirrorViewController
 
@@ -215,7 +234,7 @@ static UIButton *globalMagicBtn = nil;
         @try {
             [currentSession beginConfiguration];
             
-            // 1. 移除舊輸入
+            // 切換鏡頭輸入
             for (AVCaptureInput *input in currentSession.inputs) {
                 if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
                     AVCaptureDeviceInput *deviceInput = (AVCaptureDeviceInput *)input;
@@ -225,7 +244,6 @@ static UIButton *globalMagicBtn = nil;
                 }
             }
             
-            // 2. 加入新輸入
             AVCaptureDevicePosition targetPos = useRearCamera ? AVCaptureDevicePositionBack : AVCaptureDevicePositionFront;
             AVCaptureDevice *newDevice = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera 
                                                                             mediaType:AVMediaTypeVideo 
@@ -239,13 +257,10 @@ static UIButton *globalMagicBtn = nil;
             }
             [currentSession commitConfiguration];
             
-            // 3. 🔥 關鍵修正：遍歷所有連接，強制設定鏡像屬性
-            // 必須在 commitConfiguration 之後做，因為 connection 可能會重建
+            // 🔥 第三次強制：遍歷所有 Connection 強制修正
             for (AVCaptureOutput *output in currentSession.outputs) {
                 for (AVCaptureConnection *connection in output.connections) {
                     if (connection.isVideoMirroringSupported) {
-                        // 如果是後置鏡頭(useRearCamera=YES)，videoMirrored設為NO(不鏡像)
-                        // 如果是前置鏡頭(useRearCamera=NO)，videoMirrored設為YES(鏡像)
                         connection.videoMirrored = !useRearCamera;
                     }
                 }
@@ -253,6 +268,10 @@ static UIButton *globalMagicBtn = nil;
             
         } @catch (NSException *exception) {}
     }
+    
+    // 🔥 第四次強制：發送一個通知，讓預覽層自己刷新
+    // 這會觸發我們上面寫的 layoutSubviews Hook，進而觸發鏡像修正
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"UIDeviceOrientationDidChangeNotification" object:nil];
 }
 
 %end
