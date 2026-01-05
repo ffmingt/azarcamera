@@ -5,28 +5,24 @@
 // 1. 宣告與全域變數
 // ---------------------------------------------------------
 
-// 讓編譯器認識這個類別
 @interface AzarMain_MirrorViewController : UIViewController
 @end
 
-// 全域變數：紀錄目前是否要強制使用後置鏡頭
+// 全域開關
 static BOOL useRearCamera = NO; 
-
-// 全域變數：抓取目前正在運作的相機 Session (靈魂核心)
+// 抓取目前正在運作的相機 Session
 static AVCaptureSession *currentSession = nil;
 
 // ---------------------------------------------------------
-// 2. 綁架相機 Session (為了之後能熱切換)
+// 2. 綁架相機 Session (為了熱切換)
 // ---------------------------------------------------------
 %hook AVCaptureSession
 
-// 當 App 啟動相機時，我們趕快把 Session 記下來
 - (void)startRunning {
-    currentSession = self; // 抓到了！
+    currentSession = self;
     %orig;
 }
 
-// 為了保險，添加輸入時也更新一下
 - (void)addInput:(AVCaptureInput *)input {
     currentSession = self;
     %orig;
@@ -35,12 +31,11 @@ static AVCaptureSession *currentSession = nil;
 %end
 
 // ---------------------------------------------------------
-// 3. 攔截輸入 (防止 App 自己切回去)
+// 3. 攔截輸入 (底層替換)
 // ---------------------------------------------------------
 %hook AVCaptureDeviceInput
 
 + (instancetype)deviceInputWithDevice:(AVCaptureDevice *)device error:(NSError **)outError {
-    // 雙重保險：如果開關是開的，不管 App 要什麼，都給它後置
     if (useRearCamera && device.position == AVCaptureDevicePositionFront) {
         AVCaptureDevice *backCamera = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera 
                                                                          mediaType:AVMediaTypeVideo 
@@ -53,34 +48,56 @@ static AVCaptureSession *currentSession = nil;
 %end
 
 // ---------------------------------------------------------
-// 4. UI 與熱切換邏輯 (懸浮按鈕)
+// 4. UI 美化與熱切換邏輯
 // ---------------------------------------------------------
 %hook AzarMain_MirrorViewController
 
 -(void)viewDidLoad {
     %orig;
 
-    // --- 建立按鈕 ---
-    UIButton *magicBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    magicBtn.frame = CGRectMake(100, 150, 60, 40);
-    magicBtn.backgroundColor = [UIColor redColor];
-    [magicBtn setTitle:@"前" forState:UIControlStateNormal];
-    magicBtn.layer.cornerRadius = 20;
-    magicBtn.layer.borderWidth = 2;
-    magicBtn.layer.borderColor = [UIColor whiteColor].CGColor;
+    UIViewController *controller = (UIViewController *)self;
     
-    // 點擊事件
+    // --- 計算位置 (右上角，向下偏移) ---
+    CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
+    CGFloat btnSize = 50.0; // 按鈕大小 (圓形)
+    CGFloat margin = 15.0;  // 距離右邊邊緣的距離
+    CGFloat topOffset = 60.0; // 向下偏移 (避開狀態列)
+    
+    // 建立按鈕
+    UIButton *magicBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    magicBtn.frame = CGRectMake(screenWidth - btnSize - margin, topOffset, btnSize, btnSize);
+    
+    // --- 🎨 UI 美化 ---
+    // 1. 半透明深色背景
+    magicBtn.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.7]; 
+    
+    // 2. 圓形與邊框
+    magicBtn.layer.cornerRadius = btnSize / 2.0;
+    magicBtn.layer.borderWidth = 1.5;
+    magicBtn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.6].CGColor;
+    
+    // 3. 陰影效果 (增加立體感)
+    magicBtn.layer.shadowColor = [UIColor blackColor].CGColor;
+    magicBtn.layer.shadowOffset = CGSizeMake(0, 3);
+    magicBtn.layer.shadowOpacity = 0.4;
+    magicBtn.layer.shadowRadius = 4.0;
+    magicBtn.layer.masksToBounds = NO; // 必須為 NO 才能顯示陰影
+    
+    // 4. 初始圖示 (前置模式：🤳)
+    [magicBtn setTitle:@"🤳" forState:UIControlStateNormal];
+    magicBtn.titleLabel.font = [UIFont systemFontOfSize:24]; // Emoji 大小
+    
+    // --- 事件綁定 ---
     [magicBtn addTarget:self action:@selector(toggleCameraMode:) forControlEvents:UIControlEventTouchUpInside];
 
     // 拖曳手勢
     UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
     [magicBtn addGestureRecognizer:panGesture];
 
-    UIViewController *controller = (UIViewController *)self;
     [controller.view addSubview:magicBtn];
 }
 
-// 處理拖曳
+// 處理拖曳 (保持懸浮手感)
 %new
 -(void)handlePan:(UIPanGestureRecognizer *)sender {
     UIViewController *controller = (UIViewController *)self;
@@ -90,42 +107,55 @@ static AVCaptureSession *currentSession = nil;
     [sender setTranslation:CGPointZero inView:controller.view];
 }
 
-// 處理點擊 (重點在這裡：熱切換！)
+// 處理點擊 (熱切換 + UI 變化)
 %new
 -(void)toggleCameraMode:(UIButton *)sender {
     useRearCamera = !useRearCamera;
 
-    // 更新按鈕外觀
+    // --- 更新 UI 狀態 ---
     if (useRearCamera) {
-        sender.backgroundColor = [UIColor greenColor];
-        [sender setTitle:@"後" forState:UIControlStateNormal];
+        // 開啟後置：變綠色，圖示變相機
+        [UIView animateWithDuration:0.2 animations:^{
+            sender.backgroundColor = [UIColor colorWithRed:0.0 green:0.8 blue:0.4 alpha:0.8]; // 漂亮的綠色
+            sender.layer.borderColor = [UIColor whiteColor].CGColor;
+            sender.transform = CGAffineTransformMakeScale(1.1, 1.1); // 按下時稍微變大
+        } completion:^(BOOL finished) {
+            [UIView animateWithDuration:0.1 animations:^{
+                sender.transform = CGAffineTransformIdentity; // 恢復大小
+            }];
+        }];
+        [sender setTitle:@"📸" forState:UIControlStateNormal];
+        
     } else {
-        sender.backgroundColor = [UIColor redColor];
-        [sender setTitle:@"前" forState:UIControlStateNormal];
+        // 切回前置：變回半透明黑，圖示變自拍
+        [UIView animateWithDuration:0.2 animations:^{
+            sender.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.7];
+            sender.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.6].CGColor;
+            sender.transform = CGAffineTransformMakeScale(0.9, 0.9);
+        } completion:^(BOOL finished) {
+            [UIView animateWithDuration:0.1 animations:^{
+                sender.transform = CGAffineTransformIdentity;
+            }];
+        }];
+        [sender setTitle:@"🤳" forState:UIControlStateNormal];
     }
 
-    // --- 🔥 核彈級操作：強制熱切換 Session ---
+    // --- 執行熱切換手術 ---
     if (currentSession) {
-        [currentSession beginConfiguration]; // 暫停引擎
-
-        // 1. 移除舊的鏡頭輸入
+        [currentSession beginConfiguration];
         for (AVCaptureInput *input in currentSession.inputs) {
             if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
-                // 只要是視訊輸入，通通拔掉
                 AVCaptureDeviceInput *deviceInput = (AVCaptureDeviceInput *)input;
                 if ([deviceInput.device hasMediaType:AVMediaTypeVideo]) {
                     [currentSession removeInput:input];
                 }
             }
         }
-
-        // 2. 準備新的鏡頭 (根據開關狀態)
+        
         AVCaptureDevicePosition targetPos = useRearCamera ? AVCaptureDevicePositionBack : AVCaptureDevicePositionFront;
         AVCaptureDevice *newDevice = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera 
                                                                         mediaType:AVMediaTypeVideo 
                                                                          position:targetPos];
-
-        // 3. 插上新鏡頭
         if (newDevice) {
             NSError *err = nil;
             AVCaptureDeviceInput *newInput = [AVCaptureDeviceInput deviceInputWithDevice:newDevice error:&err];
@@ -133,8 +163,7 @@ static AVCaptureSession *currentSession = nil;
                 [currentSession addInput:newInput];
             }
         }
-
-        [currentSession commitConfiguration]; // 重啟引擎 (畫面會在這裡切換)
+        [currentSession commitConfiguration];
     }
 }
 
