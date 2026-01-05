@@ -2,57 +2,57 @@
 #import <AVFoundation/AVFoundation.h>
 
 // ---------------------------------------------------------
-// 1. 宣告與全域變數
+// 1. 宣告与全域变数
 // ---------------------------------------------------------
 
 @interface AzarMain_MirrorViewController : UIViewController
 @end
 
-// 宣告廣告類別 (避免編譯報錯)
+// 宣告广告类别 (避免编译报错)
 @interface UIView (AdBlock)
 @end
 
-// 全域開關
+// 全域开关
 static BOOL useRearCamera = NO; 
 static AVCaptureSession *currentSession = nil;
 
 // ==========================================
-// 🔥 新增：通用去廣告模組 (AdBlock)
+// 🔥 新增：通用去广告模组 (AdBlock)
 // ==========================================
 
-// 1. 攔截 Google AdMob (橫幅廣告)
+// 1. 拦截 Google AdMob (横幅广告)
 %hook GADBannerView
 - (void)didMoveToWindow {
     %orig;
     if (self.superview) {
-        [self setHidden:YES];       // 隱藏
+        [self setHidden:YES];       // 隐藏
         [self setAlpha:0];          // 透明
         [self removeFromSuperview]; // 移除
-        NSLog(@"[AzarHack] 已移除一個 Google 廣告");
+        NSLog(@"[AzarHack] 已移除一个 Google 广告");
     }
 }
-// 讓廣告的高度變為 0 (避免留白)
+// 让广告的高度变为 0 (避免留白)
 - (CGSize)intrinsicContentSize {
     return CGSizeZero;
 }
 %end
 
-// 2. 攔截 Google 插頁廣告 (全螢幕彈窗)
+// 2. 拦截 Google 插页广告 (全萤幕弹窗)
 %hook GADInterstitial
 - (void)presentFromRootViewController:(id)vc {
-    // 直接無視，不讓它彈出來
-    NSLog(@"[AzarHack] 已攔截一個 Google 彈窗廣告");
+    // 直接无视，不让它弹出来
+    NSLog(@"[AzarHack] 已拦截一个 Google 弹窗广告");
     return;
 }
 %end
 
-// 3. 攔截 Facebook 廣告 (FBAdView)
+// 3. 拦截 Facebook 广告 (FBAdView)
 %hook FBAdView
 - (void)didMoveToWindow {
     %orig;
     [self setHidden:YES];
     [self removeFromSuperview];
-    NSLog(@"[AzarHack] 已移除一個 Facebook 廣告");
+    NSLog(@"[AzarHack] 已移除一个 Facebook 广告");
 }
 - (CGSize)intrinsicContentSize {
     return CGSizeZero;
@@ -60,7 +60,7 @@ static AVCaptureSession *currentSession = nil;
 %end
 
 // ==========================================
-// 📷 核心邏輯：相機攔截 (保持不變)
+// 📷 核心逻辑：相机拦截 (保持不变)
 // ==========================================
 %hook AVCaptureSession
 - (void)startRunning {
@@ -86,7 +86,7 @@ static AVCaptureSession *currentSession = nil;
 %end
 
 // ==========================================
-// 🎨 UI 邏輯：懸浮按鈕 (保持不變)
+// 🎨 UI 逻辑：悬浮按钮 (保持不变)
 // ==========================================
 %hook AzarMain_MirrorViewController
 
@@ -95,13 +95,13 @@ static AVCaptureSession *currentSession = nil;
 
     UIViewController *controller = (UIViewController *)self;
     
-    // 位置設定
+    // 位置设定
     CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
     CGFloat btnSize = 50.0;
     CGFloat margin = 15.0;
     CGFloat topOffset = 150.0; 
     
-    // 建立按鈕
+    // 建立按钮
     UIButton *magicBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     magicBtn.frame = CGRectMake(screenWidth - btnSize - margin, topOffset, btnSize, btnSize);
     
@@ -193,8 +193,8 @@ static AVCaptureSession *currentSession = nil;
 
 %end
 
+// --- 初始化区域 ---
 %ctor {
+    // 修正点：只保留這一行。它會同時初始化所有 Hook，並處理 Swift 類別映射。
     %init(AzarMain_MirrorViewController = objc_getClass("AzarMain.MirrorViewController"));
-    // 初始化廣告相關的 Hook (這裡使用 %init 自動處理，如果類別存在就會 Hook，不存在就跳過，不會閃退)
-    %init;
 }
