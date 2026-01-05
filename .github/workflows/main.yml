@@ -4,7 +4,6 @@ on: [push]
 
 jobs:
   build:
-    # 修正 1: 改回 macos-latest (現在是 macOS 14/15, 使用 Xcode 16)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,22 +17,17 @@ jobs:
 
       - name: Get iOS SDK
         run: |
-          # 修正 2: 強制下載官方 Theos 提供的 iOS 16.5 SDK
-          # 這是為了修復 Xcode 16 編譯舊代碼時的 "module map" 錯誤
-          curl -L -o $HOME/theos/sdks/iPhoneOS16.5.sdk.tar.xz https://github.com/theos/sdks/releases/download/16.5/iPhoneOS16.5.sdk.tar.xz
+          # 修正 1: 強制刪除 Theos 自動建立的空資料夾，解決 "already exists" 錯誤
+          rm -rf $HOME/theos/sdks
           
-          # 解壓縮
-          tar -xf $HOME/theos/sdks/iPhoneOS16.5.sdk.tar.xz -C $HOME/theos/sdks/
-          
-          # 清理壓縮檔
-          rm $HOME/theos/sdks/iPhoneOS16.5.sdk.tar.xz
+          # 修正 2: 使用官方 Theos SDK 倉庫 (輕量且支援 Xcode 16)
+          # 使用 --depth 1 只下載最新版，速度最快
+          git clone --depth 1 https://github.com/theos/sdks.git $HOME/theos/sdks
 
       - name: Build Package
         run: |
-          # 修正 3: 明確指定 SDK 版本為 16.5
-          # 並且加入 -Wno-error 以防止 Xcode 16 因為小警告就停止編譯
-          echo "DEBUG: SDKs available:"
-          ls -l $HOME/theos/sdks/
+          # 修正 3: 明確指定使用 SDK 16.5 (倉庫裡最新的穩定版)
+          # 這樣可以避開 Xcode 16 編譯舊版 SDK 的錯誤
           make package FINALPACKAGE=1 TARGET=iphone:clang:16.5:14.0 THEOS_PACKAGE_SCHEME=rootless
 
       - name: Upload Deb
