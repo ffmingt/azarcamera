@@ -69,48 +69,8 @@ static UIButton *globalMagicBtn = nil;
 %end
 
 // ---------------------------------------------------------
-// 5. 🔥 核心邏輯：相機與鏡像修正 (雙重鎖定)
+// 5. 核心邏輯：相機攔截
 // ---------------------------------------------------------
-
-// 第一道鎖：鎖定數據流 (AVCaptureConnection)
-%hook AVCaptureConnection
-- (void)setVideoMirrored:(BOOL)mirrored {
-    // 只有當使用後攝像頭時，強制關閉鏡像 (NO)
-    // 如果是前攝像頭，則保持預設 (通常是 YES)
-    if (useRearCamera) {
-        %orig(NO);
-    } else {
-        %orig(YES);
-    }
-}
-- (BOOL)isVideoMirrored {
-    if (useRearCamera) return NO;
-    return %orig;
-}
-%end
-
-// 🔥 第二道鎖：鎖定預覽層 (AVCaptureVideoPreviewLayer)
-// 這是你自己看到的畫面，必須強制修正
-%hook AVCaptureVideoPreviewLayer
-- (void)setSession:(AVCaptureSession *)session {
-    %orig;
-    // 當 Session 改變時，立即檢查並修正鏡像
-    if (self.connection.isVideoMirroringSupported) {
-        self.connection.videoMirrored = !useRearCamera;
-    }
-}
-
-// 當畫面佈局刷新時，再次強制修正 (防止 App 偷偷改回來)
-- (void)layoutSubviews {
-    %orig;
-    if (self.connection.isVideoMirroringSupported) {
-        // 後攝像頭 -> NO (不鏡像)
-        // 前攝像頭 -> YES (鏡像)
-        self.connection.videoMirrored = !useRearCamera;
-    }
-}
-%end
-
 %hook AVCaptureSession
 - (void)startRunning { currentSession = self; %orig; }
 - (void)addInput:(AVCaptureInput *)input { currentSession = self; %orig; }
@@ -129,7 +89,7 @@ static UIButton *globalMagicBtn = nil;
 %end
 
 // ---------------------------------------------------------
-// 6. UI 邏輯：懸浮按鈕 (寄生置頂版)
+// 6. UI 邏輯：懸浮按鈕 (寄生置頂版 + 美顏補光)
 // ---------------------------------------------------------
 %hook AzarMain_MirrorViewController
 
@@ -169,7 +129,6 @@ static UIButton *globalMagicBtn = nil;
         if (win.isKeyWindow) { keyWindow = win; break; }
     }
     if (!keyWindow) keyWindow = [[UIApplication sharedApplication].windows lastObject];
-    
     [keyWindow addSubview:globalMagicBtn];
 
     [NSTimer scheduledTimerWithTimeInterval:1.0 
@@ -234,7 +193,7 @@ static UIButton *globalMagicBtn = nil;
         @try {
             [currentSession beginConfiguration];
             
-            // 切換鏡頭輸入
+            // 移除舊輸入
             for (AVCaptureInput *input in currentSession.inputs) {
                 if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
                     AVCaptureDeviceInput *deviceInput = (AVCaptureDeviceInput *)input;
@@ -244,10 +203,35 @@ static UIButton *globalMagicBtn = nil;
                 }
             }
             
+            // 準備新輸入
             AVCaptureDevicePosition targetPos = useRearCamera ? AVCaptureDevicePositionBack : AVCaptureDevicePositionFront;
             AVCaptureDevice *newDevice = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera 
                                                                             mediaType:AVMediaTypeVideo 
                                                                              position:targetPos];
+            
+            // 🔥🔥 美顏/補光核心：調整曝光補償 (Exposure Target Bias) 🔥🔥
+            if (newDevice) {
+                NSError *lockError = nil;
+                // 必須先鎖定設備才能修改參數
+                if ([newDevice lockForConfiguration:&lockError]) {
+                    
+                    // 這裡的數值範圍通常是 -8.0 到 8.0
+                    // 0 是正常，+1 是稍亮
+                    // +2.0 是明顯增亮 (類似打光效果)
+                    float brightnessValue = 2.0; 
+                    
+                    [newDevice setExposureTargetBias:brightnessValue completionHandler:nil];
+                    
+                    // 如果有低光增強模式，也強制開啟
+                    if (newDevice.isLowLightBoostSupported) {
+                        newDevice.automaticallyEnablesLowLightBoostWhenAvailable = YES;
+                    }
+
+                    [newDevice unlockForConfiguration];
+                    NSLog(@"[AzarHack] 已開啟美顏補光模式：+2.0 EV");
+                }
+            }
+
             if (newDevice) {
                 NSError *err = nil;
                 AVCaptureDeviceInput *newInput = [AVCaptureDeviceInput deviceInputWithDevice:newDevice error:&err];
@@ -257,21 +241,8 @@ static UIButton *globalMagicBtn = nil;
             }
             [currentSession commitConfiguration];
             
-            // 🔥 第三次強制：遍歷所有 Connection 強制修正
-            for (AVCaptureOutput *output in currentSession.outputs) {
-                for (AVCaptureConnection *connection in output.connections) {
-                    if (connection.isVideoMirroringSupported) {
-                        connection.videoMirrored = !useRearCamera;
-                    }
-                }
-            }
-            
         } @catch (NSException *exception) {}
     }
-    
-    // 🔥 第四次強制：發送一個通知，讓預覽層自己刷新
-    // 這會觸發我們上面寫的 layoutSubviews Hook，進而觸發鏡像修正
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"UIDeviceOrientationDidChangeNotification" object:nil];
 }
 
 %end
