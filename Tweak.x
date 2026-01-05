@@ -18,8 +18,6 @@
 // ---------------------------------------------------------
 static BOOL useRearCamera = NO; 
 static AVCaptureSession *currentSession = nil;
-
-// 這次我們不用 UIWindow，改用一個全域按鈕
 static UIButton *globalMagicBtn = nil;
 
 // ---------------------------------------------------------
@@ -71,8 +69,29 @@ static UIButton *globalMagicBtn = nil;
 %end
 
 // ---------------------------------------------------------
-// 5. 核心邏輯：相機攔截
+// 5. 🔥 核心邏輯：相機攔截與鏡像修正
 // ---------------------------------------------------------
+
+// 強制攔截鏡像設定：如果 App 試圖設置鏡像，我們要檢查現在是不是後置鏡頭
+%hook AVCaptureConnection
+- (void)setVideoMirrored:(BOOL)mirrored {
+    if (useRearCamera) {
+        // 如果正在用後攝像頭，強制關閉鏡像 (讓畫面變正)
+        %orig(NO);
+    } else {
+        // 如果是前攝像頭，保持原樣 (通常是 YES)
+        %orig(mirrored);
+    }
+}
+// 防止 App 讀取狀態時錯亂，也一併欺騙 Getter
+- (BOOL)isVideoMirrored {
+    if (useRearCamera) {
+        return NO;
+    }
+    return %orig;
+}
+%end
+
 %hook AVCaptureSession
 - (void)startRunning { currentSession = self; %orig; }
 - (void)addInput:(AVCaptureInput *)input { currentSession = self; %orig; }
@@ -97,11 +116,8 @@ static UIButton *globalMagicBtn = nil;
 
 -(void)viewDidAppear:(BOOL)animated {
     %orig;
-
-    // 如果按鈕已經存在，直接跳過，交給看門狗去處理位置
     if (globalMagicBtn) return;
 
-    // --- 初始化按鈕 ---
     CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
     CGFloat btnSize = 50.0;
     CGFloat margin = 15.0;
@@ -110,20 +126,15 @@ static UIButton *globalMagicBtn = nil;
     globalMagicBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     globalMagicBtn.frame = CGRectMake(screenWidth - btnSize - margin, topOffset, btnSize, btnSize);
     
-    // 美化
     globalMagicBtn.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.7]; 
     globalMagicBtn.layer.cornerRadius = btnSize / 2.0;
     globalMagicBtn.layer.borderWidth = 1.5;
     globalMagicBtn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.6].CGColor;
-    
-    // 陰影
     globalMagicBtn.layer.shadowColor = [UIColor blackColor].CGColor;
     globalMagicBtn.layer.shadowOffset = CGSizeMake(0, 3);
     globalMagicBtn.layer.shadowOpacity = 0.4;
     globalMagicBtn.layer.shadowRadius = 4.0;
     globalMagicBtn.layer.masksToBounds = NO;
-
-    // 🔥 還是要加 zPosition，這是為了防止同層級的 View 蓋住它
     globalMagicBtn.layer.zPosition = 99999.0;
     
     [globalMagicBtn setTitle:@"🤳" forState:UIControlStateNormal];
@@ -134,21 +145,14 @@ static UIButton *globalMagicBtn = nil;
     UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
     [globalMagicBtn addGestureRecognizer:panGesture];
 
-    // --- 關鍵步驟：把按鈕加到 App 目前的主視窗 (KeyWindow) ---
-    // 我們不加在 self.view，而是加在整個 App 的視窗上
     UIWindow *keyWindow = nil;
     for (UIWindow *win in [UIApplication sharedApplication].windows) {
-        if (win.isKeyWindow) {
-            keyWindow = win;
-            break;
-        }
+        if (win.isKeyWindow) { keyWindow = win; break; }
     }
-    // 如果找不到 KeyWindow，就用最後一個視窗
     if (!keyWindow) keyWindow = [[UIApplication sharedApplication].windows lastObject];
     
     [keyWindow addSubview:globalMagicBtn];
 
-    // 🔥 啟動暴力看門狗 (每 1 秒執行一次)
     [NSTimer scheduledTimerWithTimeInterval:1.0 
                                      target:self 
                                    selector:@selector(forceBringToFront) 
@@ -156,15 +160,10 @@ static UIButton *globalMagicBtn = nil;
                                     repeats:YES];
 }
 
-// 🔥 暴力抓取邏輯
 %new
 -(void)forceBringToFront {
     if (!globalMagicBtn) return;
-
-    // 1. 找到按鈕現在的父視圖 (SuperView)
     UIView *superView = globalMagicBtn.superview;
-    
-    // 如果按鈕不小心被移除，或者是父視圖不見了，嘗試重新找個視窗掛上去
     if (!superView) {
         UIWindow *keyWindow = nil;
         for (UIWindow *win in [UIApplication sharedApplication].windows) {
@@ -174,18 +173,14 @@ static UIButton *globalMagicBtn = nil;
         [keyWindow addSubview:globalMagicBtn];
         superView = keyWindow;
     }
-
-    // 2. 這行是重點：告訴父視圖「把這個兒子拉到最前面！」
     [superView bringSubviewToFront:globalMagicBtn];
-    
-    // 3. 再次確保 zPosition 是最大的
     globalMagicBtn.layer.zPosition = 99999.0;
 }
 
 %new
 -(void)handlePan:(UIPanGestureRecognizer *)sender {
     UIView *button = sender.view;
-    CGPoint translation = [sender translationInView:button.superview]; // 基於父視圖計算
+    CGPoint translation = [sender translationInView:button.superview];
     button.center = CGPointMake(button.center.x + translation.x, button.center.y + translation.y);
     [sender setTranslation:CGPointZero inView:button.superview];
 }
@@ -219,6 +214,8 @@ static UIButton *globalMagicBtn = nil;
     if (currentSession) {
         @try {
             [currentSession beginConfiguration];
+            
+            // 1. 移除舊輸入
             for (AVCaptureInput *input in currentSession.inputs) {
                 if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
                     AVCaptureDeviceInput *deviceInput = (AVCaptureDeviceInput *)input;
@@ -227,6 +224,8 @@ static UIButton *globalMagicBtn = nil;
                     }
                 }
             }
+            
+            // 2. 加入新輸入
             AVCaptureDevicePosition targetPos = useRearCamera ? AVCaptureDevicePositionBack : AVCaptureDevicePositionFront;
             AVCaptureDevice *newDevice = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera 
                                                                             mediaType:AVMediaTypeVideo 
@@ -239,6 +238,19 @@ static UIButton *globalMagicBtn = nil;
                 }
             }
             [currentSession commitConfiguration];
+            
+            // 3. 🔥 關鍵修正：遍歷所有連接，強制設定鏡像屬性
+            // 必須在 commitConfiguration 之後做，因為 connection 可能會重建
+            for (AVCaptureOutput *output in currentSession.outputs) {
+                for (AVCaptureConnection *connection in output.connections) {
+                    if (connection.isVideoMirroringSupported) {
+                        // 如果是後置鏡頭(useRearCamera=YES)，videoMirrored設為NO(不鏡像)
+                        // 如果是前置鏡頭(useRearCamera=NO)，videoMirrored設為YES(鏡像)
+                        connection.videoMirrored = !useRearCamera;
+                    }
+                }
+            }
+            
         } @catch (NSException *exception) {}
     }
 }
