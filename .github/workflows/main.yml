@@ -6,7 +6,6 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      # 更新 checkout 到 v4
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -18,6 +17,8 @@ jobs:
 
       - name: Get iOS SDK
         run: |
+          # 修正點：先刪除 Theos 自動建立的空資料夾，避免 git 衝突
+          rm -rf $HOME/theos/sdks
           git clone https://github.com/xybp888/iOS-SDKs $HOME/theos/sdks/
           
       - name: Build Package
@@ -25,7 +26,6 @@ jobs:
           make package FINALPACKAGE=1
 
       - name: Upload Deb
-        # 這裡就是報錯的原因，已經修正為 v4
         uses: actions/upload-artifact@v4
         with:
           name: AzarMagicButton_DEB
