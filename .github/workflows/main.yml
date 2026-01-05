@@ -4,7 +4,8 @@ on: [push]
 
 jobs:
   build:
-    runs-on: macos-latest
+    # 修正 1: 使用 macOS 13 (Xcode 14/15) 以避開 Xcode 16 的編譯錯誤
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
         with:
@@ -17,13 +18,21 @@ jobs:
 
       - name: Get iOS SDK
         run: |
-          # 修正點：先刪除 Theos 自動建立的空資料夾，避免 git 衝突
-          rm -rf $HOME/theos/sdks
-          git clone https://github.com/xybp888/iOS-SDKs $HOME/theos/sdks/
+          # 修正 2: 下載官方 Theos 提供的 iOS 16.5 SDK (穩定且快速)
+          # 這樣就不會抓到奇怪的 SDK 版本
+          curl -L -o $HOME/theos/sdks/iPhoneOS16.5.sdk.tar.xz https://github.com/theos/sdks/releases/download/16.5/iPhoneOS16.5.sdk.tar.xz
           
+          # 解壓縮
+          tar -xf $HOME/theos/sdks/iPhoneOS16.5.sdk.tar.xz -C $HOME/theos/sdks/
+          
+          # 清理壓縮檔
+          rm $HOME/theos/sdks/iPhoneOS16.5.sdk.tar.xz
+
       - name: Build Package
         run: |
-          make package FINALPACKAGE=1
+          # 修正 3: 強制指定使用 16.5 SDK，並設置最低支援 iOS 14.0
+          # 這會覆蓋 Makefile 裡的設定，確保編譯器不會迷路
+          make package FINALPACKAGE=1 TARGET=iphone:clang:16.5:14.0
 
       - name: Upload Deb
         uses: actions/upload-artifact@v4
