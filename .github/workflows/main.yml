@@ -10,12 +10,13 @@ jobs:
         with:
           submodules: recursive
 
-      # 修正 1: 安裝 ldid 簽名工具
-      # 這是解決 "ldid: command not found" 的關鍵
+      # 修正 1: 安裝 dos2unix 工具
+      # 這可以用來把 Windows 格式的檔案轉成 Unix 格式
       - name: Install Dependencies
         run: |
           brew install ldid
           brew install make
+          brew install dos2unix
 
       - name: Install Theos
         run: |
@@ -24,15 +25,19 @@ jobs:
 
       - name: Get iOS SDK
         run: |
-          # 清除舊 SDK 避免衝突
           rm -rf $HOME/theos/sdks
-          # 下載官方 SDK
           git clone --depth 1 https://github.com/theos/sdks.git $HOME/theos/sdks
+
+      # 修正 2: 在編譯前，強制修復 control 檔案的格式
+      - name: Fix Windows Line Endings
+        run: |
+          dos2unix control
+          dos2unix Makefile
+          dos2unix Tweak.x
+          dos2unix AzarMagicButton.plist
 
       - name: Build Package
         run: |
-          # 開始編譯
-          # 這裡會使用剛安裝好的 ldid 進行簽名
           make package FINALPACKAGE=1 TARGET=iphone:clang:16.5:14.0 THEOS_PACKAGE_SCHEME=rootless
 
       - name: Upload Deb
