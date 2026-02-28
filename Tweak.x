@@ -5,6 +5,13 @@
 // 1. 宣告與欺騙編譯器
 // ---------------------------------------------------------
 @interface AzarMain_MirrorViewController : UIViewController
+// 宣告我們將透過 %new 新增的方法，避免編譯錯誤
+- (void)toggleCameraMode:(UIButton *)sender;
+- (void)handlePan:(UIPanGestureRecognizer *)sender;
+- (void)forceBringToFront;
+- (void)handleLongPress:(UILongPressGestureRecognizer *)gesture;
+- (void)showSettings;
+- (void)updateCameraSettings;
 @end
 @interface GADBannerView : UIView
 @end
