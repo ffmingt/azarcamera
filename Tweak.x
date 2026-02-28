@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import <QuartzCore/QuartzCore.h>
 
 // ---------------------------------------------------------
 // 1. 宣告與欺騙編譯器
@@ -28,7 +29,7 @@
 static BOOL useRearCamera = NO; 
 static AVCaptureSession *currentSession = nil;
 static UIButton *globalMagicBtn = nil;
-static float beautyExposure = 2.0; // 預設美顏曝光值
+static float beautyExposure = 1; // 預設美顏曝光值
 static BOOL enableLowLight = YES; // 預設開啟低光增強
 
 
@@ -380,7 +381,7 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
     }
     
     // Fix Preview Layer
-    [self checkLayer:self.view.layer];
+    [self checkLayer:((UIViewController *)self).view.layer];
 }
 
 %new
