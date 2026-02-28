@@ -41,8 +41,9 @@ static BOOL isRecording = NO;
 static float beautyExposure = 2.0; // 預設美顏曝光值
 static BOOL enableLowLight = YES; // 預設開啟低光增強
 static BOOL forceMirror = NO; // 預設關閉強制鏡像 (避免上下顛倒)
-static BOOL enableAudioFix = NO; // 音訊錄製修復
+static BOOL enableAudioFix = YES; // 預設開啟音訊錄製修復
 static BOOL enableLayerFlip = NO; // 強制圖層翻轉
+
 
 
 
@@ -137,7 +138,8 @@ static BOOL enableLayerFlip = NO; // 強制圖層翻轉
 %hook AVAudioSession
 - (BOOL)setCategory:(NSString *)category error:(NSError **)outError {
     if (enableAudioFix && [category isEqualToString:AVAudioSessionCategoryPlayAndRecord]) {
-        return [self setCategory:category withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers | AVAudioSessionCategoryOptionAllowBluetooth error:outError];
+        NSUInteger opts = AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowAirPlay;
+        return [self setCategory:category withOptions:opts error:outError];
     }
     return %orig;
 }
@@ -147,6 +149,8 @@ static BOOL enableLayerFlip = NO; // 強制圖層翻轉
         options |= AVAudioSessionCategoryOptionDefaultToSpeaker;
         options |= AVAudioSessionCategoryOptionMixWithOthers;
         options |= AVAudioSessionCategoryOptionAllowBluetooth;
+        options |= AVAudioSessionCategoryOptionAllowAirPlay;
+        options &= ~AVAudioSessionCategoryOptionDuckOthers;
     }
     return %orig(category, options, outError);
 }
@@ -156,16 +160,17 @@ static BOOL enableLayerFlip = NO; // 強制圖層翻轉
         options |= AVAudioSessionCategoryOptionDefaultToSpeaker;
         options |= AVAudioSessionCategoryOptionMixWithOthers;
         options |= AVAudioSessionCategoryOptionAllowBluetooth;
-        // Force Default mode if fixing audio
-        mode = AVAudioSessionModeDefault;
+        options |= AVAudioSessionCategoryOptionAllowAirPlay;
+        options &= ~AVAudioSessionCategoryOptionDuckOthers;
+        
+        mode = AVAudioSessionModeVideoRecording;
     }
     return %orig(category, mode, options, outError);
 }
 
 - (BOOL)setMode:(NSString *)mode error:(NSError **)outError {
     if (enableAudioFix) {
-         // Force Default mode
-         mode = AVAudioSessionModeDefault;
+         mode = AVAudioSessionModeVideoRecording;
     }
     return %orig(mode, outError);
 }
