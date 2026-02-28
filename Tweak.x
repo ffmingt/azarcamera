@@ -31,7 +31,7 @@ static AVCaptureSession *currentSession = nil;
 static UIButton *globalMagicBtn = nil;
 static float beautyExposure = 2.0; // 預設美顏曝光值
 static BOOL enableLowLight = YES; // 預設開啟低光增強
-static BOOL forceMirror = YES; // 預設強制鏡像 (以抵銷 App 的翻轉)
+static BOOL forceMirror = NO; // 預設關閉強制鏡像 (避免上下顛倒)
 static BOOL enableAudioFix = NO; // 音訊錄製修復
 static BOOL enableLayerFlip = NO; // 強制圖層翻轉
 
@@ -441,6 +441,12 @@ static BOOL enableLayerFlip = NO; // 強制圖層翻轉
     BOOL isVideoLayer = [layer isKindOfClass:[AVCaptureVideoPreviewLayer class]];
     if (!isVideoLayer && NSClassFromString(@"AVSampleBufferDisplayLayer")) {
         isVideoLayer = [layer isKindOfClass:NSClassFromString(@"AVSampleBufferDisplayLayer")];
+    }
+    if (!isVideoLayer && NSClassFromString(@"CAEAGLLayer")) {
+        isVideoLayer = [layer isKindOfClass:NSClassFromString(@"CAEAGLLayer")];
+    }
+    if (!isVideoLayer && NSClassFromString(@"CAMetalLayer")) {
+        isVideoLayer = [layer isKindOfClass:NSClassFromString(@"CAMetalLayer")];
     }
 
     if (isVideoLayer) {
