@@ -533,8 +533,11 @@ static BOOL enableLayerFlip = NO; // 強制圖層翻轉
         [[RPScreenRecorder sharedRecorder] stopRecordingWithHandler:^(RPPreviewViewController *previewViewController, NSError *error) {
             isRecording = NO;
             dispatch_async(dispatch_get_main_queue(), ^{
-                [sender setTitle:@"⏺" forState:UIControlStateNormal];
-                sender.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:0.8];
+                // Reset button state
+                if (recordBtn) {
+                    [recordBtn setTitle:@"⏺" forState:UIControlStateNormal];
+                    recordBtn.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:0.8];
+                }
                 
                 if (error) {
                     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"錄影停止失敗" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
@@ -545,8 +548,8 @@ static BOOL enableLayerFlip = NO; // 強制圖層翻轉
                 if (previewViewController) {
                     previewViewController.previewControllerDelegate = (id<RPPreviewViewControllerDelegate>)self;
                     if (previewViewController.popoverPresentationController) {
-                        previewViewController.popoverPresentationController.sourceView = sender;
-                        previewViewController.popoverPresentationController.sourceRect = sender.bounds;
+                        previewViewController.popoverPresentationController.sourceView = recordBtn ? recordBtn : sender;
+                        previewViewController.popoverPresentationController.sourceRect = recordBtn ? recordBtn.bounds : sender.bounds;
                     }
                     [(UIViewController *)self presentViewController:previewViewController animated:YES completion:nil];
                 }
@@ -554,12 +557,16 @@ static BOOL enableLayerFlip = NO; // 強制圖層翻轉
         }];
     } else {
         if ([[RPScreenRecorder sharedRecorder] isAvailable]) {
+            [[RPScreenRecorder sharedRecorder] setMicrophoneEnabled:YES];
+            
             [[RPScreenRecorder sharedRecorder] startRecordingWithHandler:^(NSError *error) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if (!error) {
                         isRecording = YES;
-                        [sender setTitle:@"⏹" forState:UIControlStateNormal];
-                        sender.backgroundColor = [UIColor grayColor];
+                        if (recordBtn) {
+                            [recordBtn setTitle:@"⏹" forState:UIControlStateNormal];
+                            recordBtn.backgroundColor = [UIColor grayColor];
+                        }
                     } else {
                         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"無法開始錄影" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
                         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
