@@ -1,7 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
-#import <ReplayKit/ReplayKit.h>
 
 // ---------------------------------------------------------
 // 1. 宣告與欺騙編譯器
@@ -16,11 +15,8 @@
 - (void)updateCameraSettings;
 - (void)fixMirroring;
 - (void)checkLayer:(CALayer *)layer;
-// Recording methods
-- (void)toggleRecording:(UIButton *)sender;
-- (void)previewControllerDidFinish:(RPPreviewViewController *)previewController;
-- (void)updateRecordButtonPosition;
 @end
+
 
 @interface GADBannerView : UIView
 @end
@@ -35,13 +31,12 @@
 static BOOL useRearCamera = NO; 
 static AVCaptureSession *currentSession = nil;
 static UIButton *globalMagicBtn = nil;
-static UIButton *recordBtn = nil;
-static BOOL isRecording = NO;
 
-static float beautyExposure = 2.0; // 預設美顏曝光值
+
+static float beautyExposure = 1.0; // 預設美顏曝光值
 static BOOL enableLowLight = YES; // 預設開啟低光增強
 static BOOL forceMirror = NO; // 預設關閉強制鏡像 (避免上下顛倒)
-static BOOL enableAudioFix = YES; // 預設開啟音訊錄製修復
+static BOOL enableAudioFix = NO; // 預設關閉音訊錄製修復
 static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 
 
@@ -224,27 +219,6 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
     if (!keyWindow) keyWindow = [[UIApplication sharedApplication].windows lastObject];
     [keyWindow addSubview:globalMagicBtn];
 
-    if (!recordBtn) {
-        CGFloat rSize = 40.0;
-        recordBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        recordBtn.frame = CGRectMake(globalMagicBtn.frame.origin.x + (btnSize - rSize)/2, 
-                                     globalMagicBtn.frame.origin.y + btnSize + 10, 
-                                     rSize, rSize);
-        
-        recordBtn.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:0.8];
-        recordBtn.layer.cornerRadius = rSize / 2.0;
-        recordBtn.layer.borderWidth = 1.5;
-        recordBtn.layer.borderColor = [UIColor whiteColor].CGColor;
-        recordBtn.layer.zPosition = 99998.0;
-        
-        [recordBtn setTitle:@"⏺" forState:UIControlStateNormal];
-        recordBtn.titleLabel.font = [UIFont systemFontOfSize:20];
-        
-        [recordBtn addTarget:self action:@selector(toggleRecording:) forControlEvents:UIControlEventTouchUpInside];
-        
-        [keyWindow addSubview:recordBtn];
-    }
-
     [NSTimer scheduledTimerWithTimeInterval:1.0 
                                      target:self 
                                    selector:@selector(forceBringToFront) 
@@ -267,14 +241,6 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
     }
     [superView bringSubviewToFront:globalMagicBtn];
     globalMagicBtn.layer.zPosition = 99999.0;
-    
-    if (recordBtn) {
-        if (!recordBtn.superview) {
-            [superView addSubview:recordBtn];
-        }
-        [superView bringSubviewToFront:recordBtn];
-        recordBtn.layer.zPosition = 99998.0;
-    }
 }
 
 %new
@@ -283,14 +249,6 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
     CGPoint translation = [sender translationInView:button.superview];
     button.center = CGPointMake(button.center.x + translation.x, button.center.y + translation.y);
     [sender setTranslation:CGPointZero inView:button.superview];
-    
-    if (recordBtn) {
-        CGFloat btnSize = 50.0;
-        CGFloat rSize = 40.0;
-        recordBtn.frame = CGRectMake(button.frame.origin.x + (btnSize - rSize)/2, 
-                                     button.frame.origin.y + btnSize + 10, 
-                                     rSize, rSize);
-    }
 }
 
 %new
@@ -532,69 +490,8 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
     }
 }
 
-%new
--(void)toggleRecording:(UIButton *)sender {
-    if (isRecording) {
-        [[RPScreenRecorder sharedRecorder] stopRecordingWithHandler:^(RPPreviewViewController *previewViewController, NSError *error) {
-            isRecording = NO;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                // Reset button state
-                if (recordBtn) {
-                    [recordBtn setTitle:@"⏺" forState:UIControlStateNormal];
-                    recordBtn.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:0.8];
-                }
-                
-                if (error) {
-                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"錄影停止失敗" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
-                    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
-                    [(UIViewController *)self presentViewController:alert animated:YES completion:nil];
-                }
-                
-                if (previewViewController) {
-                    previewViewController.previewControllerDelegate = (id<RPPreviewViewControllerDelegate>)self;
-                    if (previewViewController.popoverPresentationController) {
-                        previewViewController.popoverPresentationController.sourceView = recordBtn ? recordBtn : sender;
-                        previewViewController.popoverPresentationController.sourceRect = recordBtn ? recordBtn.bounds : sender.bounds;
-                    }
-                    [(UIViewController *)self presentViewController:previewViewController animated:YES completion:nil];
-                }
-            });
-        }];
-    } else {
-        if ([[RPScreenRecorder sharedRecorder] isAvailable]) {
-            [[RPScreenRecorder sharedRecorder] setMicrophoneEnabled:YES];
-            
-            [[RPScreenRecorder sharedRecorder] startRecordingWithHandler:^(NSError *error) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (!error) {
-                        isRecording = YES;
-                        if (recordBtn) {
-                            [recordBtn setTitle:@"⏹" forState:UIControlStateNormal];
-                            recordBtn.backgroundColor = [UIColor grayColor];
-                        }
-                    } else {
-                        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"無法開始錄影" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
-                        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
-                        [(UIViewController *)self presentViewController:alert animated:YES completion:nil];
-                    }
-                });
-            }];
-        } else {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"錯誤" message:@"螢幕錄製不可用" preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
-            [(UIViewController *)self presentViewController:alert animated:YES completion:nil];
-        }
-    }
-}
-
-%new
--(void)previewControllerDidFinish:(RPPreviewViewController *)previewController {
-    [previewController dismissViewControllerAnimated:YES completion:nil];
-}
-
 %end
 
 %ctor {
     %init(AzarMain_MirrorViewController = objc_getClass("AzarMain.MirrorViewController"));
 }
-
