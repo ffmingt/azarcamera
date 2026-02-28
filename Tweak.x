@@ -19,6 +19,9 @@
 static BOOL useRearCamera = NO; 
 static AVCaptureSession *currentSession = nil;
 static UIButton *globalMagicBtn = nil;
+static float beautyExposure = 2.0; // 預設美顏曝光值
+static BOOL enableLowLight = YES; // 預設開啟低光增強
+
 
 // ---------------------------------------------------------
 // 3. UI 層去廣告
@@ -88,6 +91,22 @@ static UIButton *globalMagicBtn = nil;
 }
 %end
 
+%hook AVCaptureConnection
+- (void)setVideoMirrored:(BOOL)mirrored {
+    if (useRearCamera && [self isVideoMirroringSupported]) {
+        %orig(NO);
+    } else {
+        %orig(mirrored);
+    }
+}
+- (BOOL)isVideoMirrored {
+    if (useRearCamera && [self isVideoMirroringSupported]) {
+        return NO;
+    }
+    return %orig;
+}
+%end
+
 // ---------------------------------------------------------
 // 6. UI 邏輯：懸浮按鈕 (寄生置頂版 + 美顏補光)
 // ---------------------------------------------------------
@@ -123,6 +142,11 @@ static UIButton *globalMagicBtn = nil;
 
     UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
     [globalMagicBtn addGestureRecognizer:panGesture];
+
+    UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
+    longPress.minimumPressDuration = 0.5;
+    [globalMagicBtn addGestureRecognizer:longPress];
+
 
     UIWindow *keyWindow = nil;
     for (UIWindow *win in [UIApplication sharedApplication].windows) {
@@ -218,13 +242,13 @@ static UIButton *globalMagicBtn = nil;
                     // 這裡的數值範圍通常是 -8.0 到 8.0
                     // 0 是正常，+1 是稍亮
                     // +2.0 是明顯增亮 (類似打光效果)
-                    float brightnessValue = 2.0; 
+                    float brightnessValue = beautyExposure; 
                     
                     [newDevice setExposureTargetBias:brightnessValue completionHandler:nil];
                     
-                    // 如果有低光增強模式，也強制開啟
+                    // 如果有低光增強模式，根據設定開啟或關閉
                     if (newDevice.isLowLightBoostSupported) {
-                        newDevice.automaticallyEnablesLowLightBoostWhenAvailable = YES;
+                        newDevice.automaticallyEnablesLowLightBoostWhenAvailable = enableLowLight;
                     }
 
                     [newDevice unlockForConfiguration];
@@ -242,6 +266,88 @@ static UIButton *globalMagicBtn = nil;
             [currentSession commitConfiguration];
             
         } @catch (NSException *exception) {}
+    }
+}
+
+%new
+-(void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        [self showSettings];
+    }
+}
+
+%new
+-(void)showSettings {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"美顏設定" 
+                                                                   message:@"調整參數" 
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    
+    NSString *expTitle = [NSString stringWithFormat:@"曝光補償 (目前: %.1f)", beautyExposure];
+    [alert addAction:[UIAlertAction actionWithTitle:expTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        
+        UIAlertController *inputAlert = [UIAlertController alertControllerWithTitle:@"設定曝光補償" 
+                                                                            message:@"範圍: -8.0 ~ +8.0\n(0=正常, +2=美白)" 
+                                                                     preferredStyle:UIAlertControllerStyleAlert];
+        
+        [inputAlert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
+            textField.text = [NSString stringWithFormat:@"%.1f", beautyExposure];
+            textField.keyboardType = UIKeyboardTypeDecimalPad;
+        }];
+        
+        [inputAlert addAction:[UIAlertAction actionWithTitle:@"確定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            UITextField *tf = inputAlert.textFields.firstObject;
+            float val = [tf.text floatValue];
+            if (val > 8.0) val = 8.0;
+            if (val < -8.0) val = -8.0;
+            beautyExposure = val;
+            [self updateCameraSettings];
+            [self showSettings]; 
+        }]];
+        
+        [inputAlert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+            [self showSettings];
+        }]];
+        
+        [self presentViewController:inputAlert animated:YES completion:nil];
+    }]];
+    
+    NSString *lowLightTitle = enableLowLight ? @"低光增強: ✅ 開啟" : @"低光增強: ❌ 關閉";
+    [alert addAction:[UIAlertAction actionWithTitle:lowLightTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        enableLowLight = !enableLowLight;
+        [self updateCameraSettings];
+        [self showSettings];
+    }]];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"關閉" style:UIAlertActionStyleCancel handler:nil]];
+    
+    if (alert.popoverPresentationController) {
+        alert.popoverPresentationController.sourceView = globalMagicBtn;
+        alert.popoverPresentationController.sourceRect = globalMagicBtn.bounds;
+    }
+    
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+%new
+-(void)updateCameraSettings {
+    if (!currentSession) return;
+    
+    for (AVCaptureInput *input in currentSession.inputs) {
+        if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
+            AVCaptureDeviceInput *devInput = (AVCaptureDeviceInput *)input;
+            AVCaptureDevice *device = devInput.device;
+            
+            if ([device hasMediaType:AVMediaTypeVideo]) {
+                NSError *error = nil;
+                if ([device lockForConfiguration:&error]) {
+                    [device setExposureTargetBias:beautyExposure completionHandler:nil];
+                    if (device.isLowLightBoostSupported) {
+                        device.automaticallyEnablesLowLightBoostWhenAvailable = enableLowLight;
+                    }
+                    [device unlockForConfiguration];
+                }
+            }
+        }
     }
 }
 
