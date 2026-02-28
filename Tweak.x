@@ -29,8 +29,11 @@
 static BOOL useRearCamera = NO; 
 static AVCaptureSession *currentSession = nil;
 static UIButton *globalMagicBtn = nil;
-static float beautyExposure = 1; // 預設美顏曝光值
+static float beautyExposure = 2.0; // 預設美顏曝光值
 static BOOL enableLowLight = YES; // 預設開啟低光增強
+static BOOL forceMirror = YES; // 預設強制鏡像 (以抵銷 App 的翻轉)
+static BOOL enableAudioFix = NO; // 音訊錄製修復
+
 
 
 // ---------------------------------------------------------
@@ -104,7 +107,7 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
 %hook AVCaptureConnection
 - (void)setVideoMirrored:(BOOL)mirrored {
     if (useRearCamera && [self isVideoMirroringSupported]) {
-        %orig(NO);
+        %orig(forceMirror);
     } else {
         %orig(mirrored);
     }
@@ -115,8 +118,35 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
 - (void)setConnection:(AVCaptureConnection *)connection {
     %orig(connection);
     if (useRearCamera && connection.isVideoMirroringSupported) {
-        connection.videoMirrored = NO;
+        connection.videoMirrored = forceMirror;
     }
+}
+%end
+
+%hook AVAudioSession
+- (BOOL)setCategory:(NSString *)category error:(NSError **)outError {
+    if (enableAudioFix && [category isEqualToString:AVAudioSessionCategoryPlayAndRecord]) {
+        return [self setCategory:category withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers | AVAudioSessionCategoryOptionAllowBluetooth error:outError];
+    }
+    return %orig;
+}
+
+- (BOOL)setCategory:(NSString *)category withOptions:(NSUInteger)options error:(NSError **)outError {
+    if (enableAudioFix && [category isEqualToString:AVAudioSessionCategoryPlayAndRecord]) {
+        options |= AVAudioSessionCategoryOptionDefaultToSpeaker;
+        options |= AVAudioSessionCategoryOptionMixWithOthers;
+        options |= AVAudioSessionCategoryOptionAllowBluetooth;
+    }
+    return %orig(category, options, outError);
+}
+
+- (BOOL)setCategory:(NSString *)category mode:(NSString *)mode options:(NSUInteger)options error:(NSError **)outError {
+    if (enableAudioFix && [category isEqualToString:AVAudioSessionCategoryPlayAndRecord]) {
+        options |= AVAudioSessionCategoryOptionDefaultToSpeaker;
+        options |= AVAudioSessionCategoryOptionMixWithOthers;
+        options |= AVAudioSessionCategoryOptionAllowBluetooth;
+    }
+    return %orig(category, mode, options, outError);
 }
 %end
 
@@ -332,6 +362,19 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
         [self updateCameraSettings];
         [self showSettings];
     }]];
+
+    NSString *mirrorTitle = forceMirror ? @"鏡像翻轉: ✅ 開啟" : @"鏡像翻轉: ❌ 關閉";
+    [alert addAction:[UIAlertAction actionWithTitle:mirrorTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        forceMirror = !forceMirror;
+        [self fixMirroring];
+        [self showSettings];
+    }]];
+    
+    NSString *audioTitle = enableAudioFix ? @"音訊錄製優化: ✅ 開啟" : @"音訊錄製優化: ❌ 關閉";
+    [alert addAction:[UIAlertAction actionWithTitle:audioTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        enableAudioFix = !enableAudioFix;
+        [self showSettings];
+    }]];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"關閉" style:UIAlertActionStyleCancel handler:nil]];
     
@@ -374,7 +417,7 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
         for (AVCaptureOutput *output in currentSession.outputs) {
             for (AVCaptureConnection *connection in output.connections) {
                 if (connection.isVideoMirroringSupported) {
-                    connection.videoMirrored = NO;
+                    connection.videoMirrored = forceMirror;
                 }
             }
         }
@@ -389,7 +432,7 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
     if ([layer isKindOfClass:[AVCaptureVideoPreviewLayer class]]) {
         AVCaptureVideoPreviewLayer *previewLayer = (AVCaptureVideoPreviewLayer *)layer;
         if (previewLayer.connection.isVideoMirroringSupported) {
-            previewLayer.connection.videoMirrored = NO;
+            previewLayer.connection.videoMirrored = forceMirror;
         }
     }
     if (layer.sublayers) {
