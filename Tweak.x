@@ -33,6 +33,8 @@ static float beautyExposure = 2.0; // 預設美顏曝光值
 static BOOL enableLowLight = YES; // 預設開啟低光增強
 static BOOL forceMirror = YES; // 預設強制鏡像 (以抵銷 App 的翻轉)
 static BOOL enableAudioFix = NO; // 音訊錄製修復
+static BOOL enableLayerFlip = NO; // 強制圖層翻轉
+
 
 
 
@@ -376,6 +378,13 @@ static BOOL enableAudioFix = NO; // 音訊錄製修復
         [self showSettings];
     }]];
     
+    NSString *layerFlipTitle = enableLayerFlip ? @"圖層翻轉: ✅ 開啟" : @"圖層翻轉: ❌ 關閉";
+    [alert addAction:[UIAlertAction actionWithTitle:layerFlipTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        enableLayerFlip = !enableLayerFlip;
+        [self fixMirroring];
+        [self showSettings];
+    }]];
+    
     [alert addAction:[UIAlertAction actionWithTitle:@"關閉" style:UIAlertActionStyleCancel handler:nil]];
     
     if (alert.popoverPresentationController) {
@@ -429,12 +438,26 @@ static BOOL enableAudioFix = NO; // 音訊錄製修復
 
 %new
 -(void)checkLayer:(CALayer *)layer {
-    if ([layer isKindOfClass:[AVCaptureVideoPreviewLayer class]]) {
-        AVCaptureVideoPreviewLayer *previewLayer = (AVCaptureVideoPreviewLayer *)layer;
-        if (previewLayer.connection.isVideoMirroringSupported) {
-            previewLayer.connection.videoMirrored = forceMirror;
+    BOOL isVideoLayer = [layer isKindOfClass:[AVCaptureVideoPreviewLayer class]];
+    if (!isVideoLayer && NSClassFromString(@"AVSampleBufferDisplayLayer")) {
+        isVideoLayer = [layer isKindOfClass:NSClassFromString(@"AVSampleBufferDisplayLayer")];
+    }
+
+    if (isVideoLayer) {
+        if ([layer isKindOfClass:[AVCaptureVideoPreviewLayer class]]) {
+            AVCaptureVideoPreviewLayer *previewLayer = (AVCaptureVideoPreviewLayer *)layer;
+            if (previewLayer.connection.isVideoMirroringSupported) {
+                previewLayer.connection.videoMirrored = forceMirror;
+            }
+        }
+        
+        if (enableLayerFlip) {
+            layer.transform = CATransform3DMakeScale(-1.0, 1.0, 1.0);
+        } else {
+            layer.transform = CATransform3DIdentity;
         }
     }
+    
     if (layer.sublayers) {
         for (CALayer *sub in layer.sublayers) {
             [self checkLayer:sub];
