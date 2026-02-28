@@ -12,6 +12,8 @@
 - (void)handleLongPress:(UILongPressGestureRecognizer *)gesture;
 - (void)showSettings;
 - (void)updateCameraSettings;
+- (void)fixMirroring;
+- (void)checkLayer:(CALayer *)layer;
 @end
 @interface GADBannerView : UIView
 @end
@@ -106,11 +108,14 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
         %orig(mirrored);
     }
 }
-- (BOOL)isVideoMirrored {
-    if (useRearCamera && [self isVideoMirroringSupported]) {
-        return NO;
+%end
+
+%hook AVCaptureVideoPreviewLayer
+- (void)setConnection:(AVCaptureConnection *)connection {
+    %orig(connection);
+    if (useRearCamera && connection.isVideoMirroringSupported) {
+        connection.videoMirrored = NO;
     }
-    return %orig;
 }
 %end
 
@@ -272,6 +277,8 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
             }
             [currentSession commitConfiguration];
             
+            [self fixMirroring];
+            
         } @catch (NSException *exception) {}
     }
 }
@@ -354,6 +361,39 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
                     [device unlockForConfiguration];
                 }
             }
+        }
+    }
+}
+
+%new
+-(void)fixMirroring {
+    if (!useRearCamera) return;
+    
+    if (currentSession) {
+        for (AVCaptureOutput *output in currentSession.outputs) {
+            for (AVCaptureConnection *connection in output.connections) {
+                if (connection.isVideoMirroringSupported) {
+                    connection.videoMirrored = NO;
+                }
+            }
+        }
+    }
+    
+    // Fix Preview Layer
+    [self checkLayer:self.view.layer];
+}
+
+%new
+-(void)checkLayer:(CALayer *)layer {
+    if ([layer isKindOfClass:[AVCaptureVideoPreviewLayer class]]) {
+        AVCaptureVideoPreviewLayer *previewLayer = (AVCaptureVideoPreviewLayer *)layer;
+        if (previewLayer.connection.isVideoMirroringSupported) {
+            previewLayer.connection.videoMirrored = NO;
+        }
+    }
+    if (layer.sublayers) {
+        for (CALayer *sub in layer.sublayers) {
+            [self checkLayer:sub];
         }
     }
 }
