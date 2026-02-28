@@ -29,7 +29,7 @@
 static BOOL useRearCamera = NO; 
 static AVCaptureSession *currentSession = nil;
 static UIButton *globalMagicBtn = nil;
-static float beautyExposure = 2.0; // 預設美顏曝光值
+static float beautyExposure = 1.0; // 預設美顏曝光值
 static BOOL enableLowLight = YES; // 預設開啟低光增強
 static BOOL forceMirror = NO; // 預設關閉強制鏡像 (避免上下顛倒)
 static BOOL enableAudioFix = NO; // 音訊錄製修復
@@ -476,4 +476,5 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 %ctor {
     %init(AzarMain_MirrorViewController = objc_getClass("AzarMain.MirrorViewController"));
 }
+
 
