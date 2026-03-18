@@ -180,6 +180,7 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 // ---------------------------------------------------------
 // 6. UI 邏輯：懸浮按鈕 (寄生置頂版 + 美顏補光)
 // ---------------------------------------------------------
+%group AzarMirror
 %hook AzarMain_MirrorViewController
 
 -(void)viewDidAppear:(BOOL)animated {
@@ -495,12 +496,14 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
         }
     }
 }
-
 %end
+%end
+
 
 // ---------------------------------------------------------
 // 7. 繞過匹配冷卻 (Swipe Bypass)
 // ---------------------------------------------------------
+%group AzarMatch
 %hook AzarMain_MatchViewController
 
 // 強制允許立即滑動
@@ -526,20 +529,28 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 - (BOOL)shouldShowSwipeHint {
     return NO;
 }
-
+%end
 %end
 
 
 %ctor {
-    %init(AzarMain_MirrorViewController = objc_getClass("AzarMain.MirrorViewController"));
+    // 1. 初始化預設組 (廣告、相機攔截等)
+    %init(_ungrouped);
     
-    // 初始化匹配控制器的 Hook，嘗試多種可能的類別名稱
+    // 2. 初始化鏡像組 (動態綁定類別)
+    Class mirrorVC = objc_getClass("AzarMain.MirrorViewController");
+    if (mirrorVC) {
+        %init(AzarMirror, AzarMain_MirrorViewController = mirrorVC);
+        NSLog(@"[AzarHack] MirrorViewController Hooked!");
+    }
+    
+    // 3. 初始化匹配繞過組 (動態綁定類別)
     Class matchVC = objc_getClass("AzarMain.MatchViewController") ?: 
                     objc_getClass("Azar.MatchViewController") ?: 
                     objc_getClass("MatchViewController");
     
     if (matchVC) {
-        %init(AzarMain_MatchViewController = matchVC);
-        NSLog(@"[AzarHack] MatchViewController Hooked successfully!");
+        %init(AzarMatch, AzarMain_MatchViewController = matchVC);
+        NSLog(@"[AzarHack] MatchViewController Hooked!");
     }
 }
