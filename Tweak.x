@@ -6,7 +6,6 @@
 // 1. 宣告與欺騙編譯器
 // ---------------------------------------------------------
 @interface AzarMain_MirrorViewController : UIViewController
-// 宣告我們將透過 %new 新增的方法，避免編譯錯誤
 - (void)toggleCameraMode:(UIButton *)sender;
 - (void)handlePan:(UIPanGestureRecognizer *)sender;
 - (void)forceBringToFront;
@@ -15,6 +14,15 @@
 - (void)updateCameraSettings;
 - (void)fixMirroring;
 - (void)checkLayer:(CALayer *)layer;
+@end
+
+@interface AzarMain_SwipeMatchViewController : UIViewController
+- (bool)gestureRecognizerShouldBegin:(id)arg1;
+- (void)handleSwipeGesture:(id)arg1;
+@end
+
+@interface AzarMain_DiscoverGestureFailableScrollView : UIScrollView
+- (bool)gestureRecognizer:(id)arg1 shouldRecognizeSimultaneouslyWithGestureRecognizer:(id)arg2;
 @end
 
 @interface AzarMain_MatchViewController : UIViewController
@@ -44,9 +52,6 @@ static BOOL enableLowLight = YES; // 預設開啟低光增強
 static BOOL forceMirror = NO; // 預設關閉強制鏡像 (避免上下顛倒)
 static BOOL enableAudioFix = NO; // 預設關閉音訊錄製修復
 static BOOL enableLayerFlip = YES; // 強制圖層翻轉
-
-
-
 
 
 // ---------------------------------------------------------
@@ -504,8 +509,27 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 // 7. 繞過匹配冷卻 (Swipe Bypass)
 // ---------------------------------------------------------
 %group AzarMatch
-%hook AzarMain_MatchViewController
+%hook AzarMain_SwipeMatchViewController
 
+// 解鎖手勢檢查，讓滑動始終可以觸發
+- (bool)gestureRecognizerShouldBegin:(id)gesture {
+    return YES;
+}
+
+// 確保滑動手勢被處理
+- (void)handleSwipeGesture:(id)gesture {
+    %orig(gesture);
+}
+%end
+
+%hook AzarMain_DiscoverGestureFailableScrollView
+// 允許滑動手勢與其他手勢同時並行，防止被計時器或動畫鎖定
+- (bool)gestureRecognizer:(id)arg1 shouldRecognizeSimultaneouslyWithGestureRecognizer:(id)arg2 {
+    return YES;
+}
+%end
+
+%hook AzarMain_MatchViewController
 // 強制允許立即滑動
 - (BOOL)canSwipeNext {
     return YES;
@@ -524,11 +548,6 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 - (void)setSwipeEnabled:(BOOL)enabled {
     %orig(YES);
 }
-
-// 某些版本可能使用這個方法來檢查是否可以跳過
-- (BOOL)shouldShowSwipeHint {
-    return NO;
-}
 %end
 %end
 
@@ -545,12 +564,17 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
     }
     
     // 3. 初始化匹配繞過組 (動態綁定類別)
+    Class swipeVC = objc_getClass("AzarMain.SwipeMatchViewController");
+    Class scrollVC = objc_getClass("AzarMain.DiscoverGestureFailableScrollView");
     Class matchVC = objc_getClass("AzarMain.MatchViewController") ?: 
                     objc_getClass("Azar.MatchViewController") ?: 
                     objc_getClass("MatchViewController");
     
-    if (matchVC) {
-        %init(AzarMatch, AzarMain_MatchViewController = matchVC);
-        NSLog(@"[AzarHack] MatchViewController Hooked!");
+    if (swipeVC || matchVC || scrollVC) {
+        %init(AzarMatch, 
+              AzarMain_SwipeMatchViewController = swipeVC, 
+              AzarMain_DiscoverGestureFailableScrollView = scrollVC,
+              AzarMain_MatchViewController = matchVC);
+        NSLog(@"[AzarHack] Match/Swipe/Scroll Hooked!");
     }
 }
