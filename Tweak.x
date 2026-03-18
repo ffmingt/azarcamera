@@ -17,6 +17,12 @@
 - (void)checkLayer:(CALayer *)layer;
 @end
 
+@interface AzarMain_MatchViewController : UIViewController
+- (BOOL)canSwipeNext;
+- (double)minimumMatchDuration;
+- (BOOL)isSwipeEnabled;
+@end
+
 
 @interface GADBannerView : UIView
 @end
@@ -492,6 +498,48 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 
 %end
 
+// ---------------------------------------------------------
+// 7. 繞過匹配冷卻 (Swipe Bypass)
+// ---------------------------------------------------------
+%hook AzarMain_MatchViewController
+
+// 強制允許立即滑動
+- (BOOL)canSwipeNext {
+    return YES;
+}
+
+// 將最小匹配時間限制設為 0 秒
+- (double)minimumMatchDuration {
+    return 0.0;
+}
+
+// 確保滑動狀態始終為開啟
+- (BOOL)isSwipeEnabled {
+    return YES;
+}
+
+- (void)setSwipeEnabled:(BOOL)enabled {
+    %orig(YES);
+}
+
+// 某些版本可能使用這個方法來檢查是否可以跳過
+- (BOOL)shouldShowSwipeHint {
+    return NO;
+}
+
+%end
+
+
 %ctor {
     %init(AzarMain_MirrorViewController = objc_getClass("AzarMain.MirrorViewController"));
+    
+    // 初始化匹配控制器的 Hook，嘗試多種可能的類別名稱
+    Class matchVC = objc_getClass("AzarMain.MatchViewController") ?: 
+                    objc_getClass("Azar.MatchViewController") ?: 
+                    objc_getClass("MatchViewController");
+    
+    if (matchVC) {
+        %init(AzarMain_MatchViewController = matchVC);
+        NSLog(@"[AzarHack] MatchViewController Hooked successfully!");
+    }
 }
