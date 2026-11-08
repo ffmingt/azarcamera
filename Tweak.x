@@ -2,7 +2,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 
-// --------------------------------------------------------
+// ---------------------------------------------------------
 // 方法宣告
 // ---------------------------------------------------------
 @interface AzarMain_MirrorViewController : UIViewController
@@ -19,6 +19,7 @@
 - (void)syncCameraButtonWithSession;
 - (void)cameraSessionDidChange:(NSNotification *)notification;
 - (void)fixMirroring;
+- (void)updatePreviewLayersInLayer:(CALayer *)layer;
 @end
 
 // 獨立透明視窗：讓按鈕不受 app 內其他 view/window 的排序影響，
@@ -128,7 +129,7 @@ static BOOL forceMirror = NO; // 預設關閉強制鏡像 (避免上下顛倒)
     CGFloat margin = 15.0;
     CGFloat topOffset = 150.0; 
 
-    UIWindowScene *windowScene = self.view.window.windowScene;
+    UIWindowScene *windowScene = ((UIViewController *)self).view.window.windowScene;
     if (windowScene) {
         globalOverlayWindow = [[AZPassthroughWindow alloc] initWithWindowScene:windowScene];
     } else {
@@ -171,7 +172,7 @@ static BOOL forceMirror = NO; // 預設關閉強制鏡像 (避免上下顛倒)
 -(void)viewDidDisappear:(BOOL)animated {
     %orig;
     [[NSNotificationCenter defaultCenter] removeObserver:self name:AZCameraSessionDidChangeNotification object:nil];
-    if (!self.presentedViewController) globalOverlayWindow.hidden = YES;
+    if (!((UIViewController *)self).presentedViewController) globalOverlayWindow.hidden = YES;
 }
 
 %new
@@ -402,7 +403,7 @@ static BOOL forceMirror = NO; // 預設關閉強制鏡像 (避免上下顛倒)
 
 %new
 -(void)fixMirroring {
-    [self updatePreviewLayersInLayer:self.view.layer];
+    [self updatePreviewLayersInLayer:((UIViewController *)self).view.layer];
 }
 
 %new
