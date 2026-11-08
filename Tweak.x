@@ -2,7 +2,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 
-// ---------------------------------------------------------
+// --------------------------------------------------------
 // 方法宣告
 // ---------------------------------------------------------
 @interface AzarMain_MirrorViewController : UIViewController
