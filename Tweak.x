@@ -25,12 +25,28 @@
 @interface GADInterstitial : NSObject
 @end
 
+// 獨立透明視窗：讓按鈕不受 app 內其他 view/window 的排序影響，
+// 並讓按鈕以外的觸控穿透到原本的介面。
+@interface AZPassthroughWindow : UIWindow
+@end
+
+@implementation AZPassthroughWindow
+- (BOOL)canBecomeKeyWindow { return NO; }
+
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hitView = [super hitTest:point withEvent:event];
+    UIView *rootView = self.rootViewController.view;
+    return (hitView == rootView || hitView == self) ? nil : hitView;
+}
+@end
+
 // ---------------------------------------------------------
 // 2. 全域變數
 // ---------------------------------------------------------
 static BOOL useRearCamera = NO; 
 static AVCaptureSession *currentSession = nil;
 static UIButton *globalMagicBtn = nil;
+static UIWindow *globalOverlayWindow = nil;
 
 
 static float beautyExposure = 1.0; // 預設美顏曝光值
@@ -178,15 +194,33 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 
 -(void)viewDidAppear:(BOOL)animated {
     %orig;
-    if (globalMagicBtn) return;
+    if (globalMagicBtn) {
+        [self forceBringToFront];
+        return;
+    }
 
-    CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
     CGFloat btnSize = 50.0;
     CGFloat margin = 15.0;
     CGFloat topOffset = 150.0; 
 
+    UIWindowScene *windowScene = self.view.window.windowScene;
+    if (windowScene) {
+        globalOverlayWindow = [[AZPassthroughWindow alloc] initWithWindowScene:windowScene];
+    } else {
+        globalOverlayWindow = [[AZPassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    }
+    globalOverlayWindow.backgroundColor = [UIColor clearColor];
+    globalOverlayWindow.opaque = NO;
+    globalOverlayWindow.rootViewController = [UIViewController new];
+    globalOverlayWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
+    globalOverlayWindow.rootViewController.view.opaque = NO;
+    globalOverlayWindow.windowLevel = UIWindowLevelAlert + 1.0;
+    globalOverlayWindow.hidden = NO;
+
     globalMagicBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    globalMagicBtn.frame = CGRectMake(screenWidth - btnSize - margin, topOffset, btnSize, btnSize);
+    globalMagicBtn.frame = CGRectMake(CGRectGetWidth(globalOverlayWindow.bounds) - btnSize - margin,
+                                      topOffset, btnSize, btnSize);
+    globalMagicBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleBottomMargin;
     
     globalMagicBtn.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.7]; 
     globalMagicBtn.layer.cornerRadius = btnSize / 2.0;
@@ -212,12 +246,8 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
     [globalMagicBtn addGestureRecognizer:longPress];
 
 
-    UIWindow *keyWindow = nil;
-    for (UIWindow *win in [UIApplication sharedApplication].windows) {
-        if (win.isKeyWindow) { keyWindow = win; break; }
-    }
-    if (!keyWindow) keyWindow = [[UIApplication sharedApplication].windows lastObject];
-    [keyWindow addSubview:globalMagicBtn];
+    [globalOverlayWindow.rootViewController.view addSubview:globalMagicBtn];
+    [self forceBringToFront];
 
     [NSTimer scheduledTimerWithTimeInterval:1.0 
                                      target:self 
@@ -228,19 +258,24 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 
 %new
 -(void)forceBringToFront {
-    if (!globalMagicBtn) return;
-    UIView *superView = globalMagicBtn.superview;
-    if (!superView) {
-        UIWindow *keyWindow = nil;
-        for (UIWindow *win in [UIApplication sharedApplication].windows) {
-            if (win.isKeyWindow) { keyWindow = win; break; }
-        }
-        if (!keyWindow) keyWindow = [[UIApplication sharedApplication].windows lastObject];
-        [keyWindow addSubview:globalMagicBtn];
-        superView = keyWindow;
-    }
-    [superView bringSubviewToFront:globalMagicBtn];
+    if (!globalMagicBtn || !globalOverlayWindow) return;
+
+    UIView *rootView = globalOverlayWindow.rootViewController.view;
+    if (globalMagicBtn.superview != rootView) [rootView addSubview:globalMagicBtn];
+    [rootView bringSubviewToFront:globalMagicBtn];
     globalMagicBtn.layer.zPosition = 99999.0;
+
+    // 持續高於 app 目前其他視窗，避免全螢幕頁面或新建的 app window 蓋住按鈕。
+    NSArray<UIWindow *> *windows = globalOverlayWindow.windowScene.windows;
+    if (!windows) windows = [UIApplication sharedApplication].windows;
+    CGFloat highestWindowLevel = UIWindowLevelAlert;
+    for (UIWindow *window in windows) {
+        if (window != globalOverlayWindow) {
+            highestWindowLevel = MAX(highestWindowLevel, window.windowLevel);
+        }
+    }
+    globalOverlayWindow.windowLevel = highestWindowLevel + 1.0;
+    globalOverlayWindow.hidden = NO;
 }
 
 %new
