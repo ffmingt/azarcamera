@@ -3,26 +3,22 @@
 #import <QuartzCore/QuartzCore.h>
 
 // ---------------------------------------------------------
-// 1. 宣告與欺騙編譯器
+// 方法宣告
 // ---------------------------------------------------------
 @interface AzarMain_MirrorViewController : UIViewController
 // 宣告我們將透過 %new 新增的方法，避免編譯錯誤
 - (void)toggleCameraMode:(UIButton *)sender;
 - (void)handlePan:(UIPanGestureRecognizer *)sender;
 - (void)forceBringToFront;
+- (void)configureButtonInteractions;
 - (void)handleLongPress:(UILongPressGestureRecognizer *)gesture;
 - (void)showSettings;
 - (void)updateCameraSettings;
+- (void)applySettingsToDevice:(AVCaptureDevice *)device;
+- (void)updateCameraButton:(UIButton *)button;
+- (void)syncCameraButtonWithSession;
+- (void)cameraSessionDidChange:(NSNotification *)notification;
 - (void)fixMirroring;
-- (void)checkLayer:(CALayer *)layer;
-@end
-
-
-@interface GADBannerView : UIView
-@end
-@interface FBAdView : UIView
-@end
-@interface GADInterstitial : NSObject
 @end
 
 // 獨立透明視窗：讓按鈕不受 app 內其他 view/window 的排序影響，
@@ -47,154 +43,83 @@ static BOOL useRearCamera = NO;
 static AVCaptureSession *currentSession = nil;
 static UIButton *globalMagicBtn = nil;
 static UIWindow *globalOverlayWindow = nil;
+static NSString * const AZCameraSessionDidChangeNotification = @"AZCameraSessionDidChangeNotification";
 
 
 static float beautyExposure = 1.0; // 預設美顏曝光值
 static BOOL enableLowLight = YES; // 預設開啟低光增強
 static BOOL forceMirror = NO; // 預設關閉強制鏡像 (避免上下顛倒)
-static BOOL enableAudioFix = NO; // 預設關閉音訊錄製修復
-static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 
 
 
 
 
 // ---------------------------------------------------------
-// 3. UI 層去廣告
-// ---------------------------------------------------------
-%hook GADBannerView
-- (void)didMoveToWindow {
-    %orig;
-    if (self.superview) { [self setHidden:YES]; [self removeFromSuperview]; }
-}
-- (CGSize)intrinsicContentSize { return CGSizeZero; }
-%end
-
-%hook GADInterstitial
-- (void)presentFromRootViewController:(id)vc { return; }
-%end
-
-%hook FBAdView
-- (void)didMoveToWindow {
-    %orig;
-    [self setHidden:YES]; [self removeFromSuperview];
-}
-- (CGSize)intrinsicContentSize { return CGSizeZero; }
-%end
-
-// ---------------------------------------------------------
-// 4. 網路層去廣告
-// ---------------------------------------------------------
-%hook NSMutableURLRequest
-- (void)setURL:(NSURL *)url {
-    NSString *urlStr = [url absoluteString];
-    NSArray *blockKeywords = @[
-        @"googleads", @"doubleclick", @"admob",
-        @"facebook.com/ad", @"audience_network",
-        @"applovin", @"unity3d.com/ads"
-    ];
-    BOOL isAd = NO;
-    for (NSString *keyword in blockKeywords) {
-        if ([urlStr rangeOfString:keyword options:NSCaseInsensitiveSearch].location != NSNotFound) {
-            isAd = YES; break;
-        }
-    }
-    if (isAd) {
-        %orig([NSURL URLWithString:@"http://127.0.0.1"]);
-    } else {
-        %orig(url);
-    }
-}
-%end
-
-// ---------------------------------------------------------
-// 5. 核心邏輯：相機攔截
+// 相機攔截
 // ---------------------------------------------------------
 %hook AVCaptureSession
-- (void)startRunning { currentSession = self; %orig; }
-- (void)addInput:(AVCaptureInput *)input { currentSession = self; %orig; }
-%end
-
-%hook AVCaptureDeviceInput
-+ (instancetype)deviceInputWithDevice:(AVCaptureDevice *)device error:(NSError **)outError {
-    if (useRearCamera && device.position == AVCaptureDevicePositionFront) {
-        AVCaptureDevice *backCamera = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera 
-                                                                         mediaType:AVMediaTypeVideo 
-                                                                          position:AVCaptureDevicePositionBack];
-        if (backCamera) return %orig(backCamera, outError);
+- (void)startRunning {
+    %orig;
+    if (!self.isRunning) return;
+    BOOL hasVideoInput = NO;
+    for (AVCaptureInput *input in self.inputs) {
+        if ([input isKindOfClass:[AVCaptureDeviceInput class]] &&
+            [((AVCaptureDeviceInput *)input).device hasMediaType:AVMediaTypeVideo]) {
+            hasVideoInput = YES;
+            break;
+        }
     }
-    return %orig;
+    if (!hasVideoInput) return;
+    currentSession = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:AZCameraSessionDidChangeNotification object:self];
+    });
 }
-%end
-
-%hook AVCaptureConnection
-- (void)setVideoMirrored:(BOOL)mirrored {
-    if (useRearCamera && [self isVideoMirroringSupported]) {
-        %orig(forceMirror);
-    } else {
-        %orig(mirrored);
-    }
+- (void)addInput:(AVCaptureInput *)input {
+    %orig;
+    if (![input isKindOfClass:[AVCaptureDeviceInput class]]) return;
+    AVCaptureDevice *device = ((AVCaptureDeviceInput *)input).device;
+    if (![device hasMediaType:AVMediaTypeVideo]) return;
+    currentSession = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:AZCameraSessionDidChangeNotification object:self];
+    });
+}
+- (void)stopRunning {
+    %orig;
+    if (currentSession == self) currentSession = nil;
 }
 %end
 
 %hook AVCaptureVideoPreviewLayer
 - (void)setConnection:(AVCaptureConnection *)connection {
     %orig(connection);
-    if (useRearCamera && connection.isVideoMirroringSupported) {
-        connection.videoMirrored = forceMirror;
+    if (currentSession && self.session == currentSession && connection.isVideoMirroringSupported) {
+        if (useRearCamera) {
+            connection.automaticallyAdjustsVideoMirroring = NO;
+            connection.videoMirrored = forceMirror;
+        } else {
+            connection.automaticallyAdjustsVideoMirroring = YES;
+        }
     }
-}
-%end
-
-%hook AVAudioSession
-- (BOOL)setCategory:(NSString *)category error:(NSError **)outError {
-    if (enableAudioFix && [category isEqualToString:AVAudioSessionCategoryPlayAndRecord]) {
-        NSUInteger opts = AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowAirPlay;
-        return [self setCategory:category withOptions:opts error:outError];
-    }
-    return %orig;
-}
-
-- (BOOL)setCategory:(NSString *)category withOptions:(NSUInteger)options error:(NSError **)outError {
-    if (enableAudioFix && [category isEqualToString:AVAudioSessionCategoryPlayAndRecord]) {
-        options |= AVAudioSessionCategoryOptionDefaultToSpeaker;
-        options |= AVAudioSessionCategoryOptionMixWithOthers;
-        options |= AVAudioSessionCategoryOptionAllowBluetooth;
-        options |= AVAudioSessionCategoryOptionAllowAirPlay;
-        options &= ~AVAudioSessionCategoryOptionDuckOthers;
-    }
-    return %orig(category, options, outError);
-}
-
-- (BOOL)setCategory:(NSString *)category mode:(NSString *)mode options:(NSUInteger)options error:(NSError **)outError {
-    if (enableAudioFix && [category isEqualToString:AVAudioSessionCategoryPlayAndRecord]) {
-        options |= AVAudioSessionCategoryOptionDefaultToSpeaker;
-        options |= AVAudioSessionCategoryOptionMixWithOthers;
-        options |= AVAudioSessionCategoryOptionAllowBluetooth;
-        options |= AVAudioSessionCategoryOptionAllowAirPlay;
-        options &= ~AVAudioSessionCategoryOptionDuckOthers;
-        
-        mode = AVAudioSessionModeVideoRecording;
-    }
-    return %orig(category, mode, options, outError);
-}
-
-- (BOOL)setMode:(NSString *)mode error:(NSError **)outError {
-    if (enableAudioFix) {
-         mode = AVAudioSessionModeVideoRecording;
-    }
-    return %orig(mode, outError);
 }
 %end
 
 // ---------------------------------------------------------
-// 6. UI 邏輯：懸浮按鈕 (寄生置頂版 + 美顏補光)
+// UI 邏輯：懸浮按鈕與相機設定
 // ---------------------------------------------------------
 %hook AzarMain_MirrorViewController
 
 -(void)viewDidAppear:(BOOL)animated {
     %orig;
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:AZCameraSessionDidChangeNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                               selector:@selector(cameraSessionDidChange:)
+                                                   name:AZCameraSessionDidChangeNotification
+                                                 object:nil];
     if (globalMagicBtn) {
+        [self configureButtonInteractions];
+        [self syncCameraButtonWithSession];
         [self forceBringToFront];
         return;
     }
@@ -214,6 +139,7 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
     globalOverlayWindow.rootViewController = [UIViewController new];
     globalOverlayWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
     globalOverlayWindow.rootViewController.view.opaque = NO;
+    // 獨立視窗放在 alert 層以上，確保按鈕不被 app 內其他視圖蓋住。
     globalOverlayWindow.windowLevel = UIWindowLevelAlert + 1.0;
     globalOverlayWindow.hidden = NO;
 
@@ -236,24 +162,21 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
     [globalMagicBtn setTitle:@"🤳" forState:UIControlStateNormal];
     globalMagicBtn.titleLabel.font = [UIFont systemFontOfSize:24];
     
-    [globalMagicBtn addTarget:self action:@selector(toggleCameraMode:) forControlEvents:UIControlEventTouchUpInside];
-
-    UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-    [globalMagicBtn addGestureRecognizer:panGesture];
-
-    UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
-    longPress.minimumPressDuration = 0.5;
-    [globalMagicBtn addGestureRecognizer:longPress];
-
-
     [globalOverlayWindow.rootViewController.view addSubview:globalMagicBtn];
+    [self configureButtonInteractions];
+    [self syncCameraButtonWithSession];
     [self forceBringToFront];
+}
 
-    [NSTimer scheduledTimerWithTimeInterval:1.0 
-                                     target:self 
-                                   selector:@selector(forceBringToFront) 
-                                   userInfo:nil 
-                                    repeats:YES];
+-(void)viewDidDisappear:(BOOL)animated {
+    %orig;
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:AZCameraSessionDidChangeNotification object:nil];
+    if (!self.presentedViewController) globalOverlayWindow.hidden = YES;
+}
+
+%new
+-(void)cameraSessionDidChange:(NSNotification *)notification {
+    if (notification.object == currentSession) [self syncCameraButtonWithSession];
 }
 
 %new
@@ -265,109 +188,112 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
     [rootView bringSubviewToFront:globalMagicBtn];
     globalMagicBtn.layer.zPosition = 99999.0;
 
-    // 持續高於 app 目前其他視窗，避免全螢幕頁面或新建的 app window 蓋住按鈕。
-    NSArray<UIWindow *> *windows = globalOverlayWindow.windowScene.windows;
-    if (!windows) windows = [UIApplication sharedApplication].windows;
-    CGFloat highestWindowLevel = UIWindowLevelAlert;
-    for (UIWindow *window in windows) {
-        if (window != globalOverlayWindow) {
-            highestWindowLevel = MAX(highestWindowLevel, window.windowLevel);
-        }
-    }
-    globalOverlayWindow.windowLevel = highestWindowLevel + 1.0;
+    globalOverlayWindow.windowLevel = UIWindowLevelAlert + 1.0;
     globalOverlayWindow.hidden = NO;
+}
+
+%new
+-(void)configureButtonInteractions {
+    if (!globalMagicBtn) return;
+
+    [globalMagicBtn removeTarget:nil action:NULL forControlEvents:UIControlEventAllEvents];
+    [globalMagicBtn addTarget:self action:@selector(toggleCameraMode:) forControlEvents:UIControlEventTouchUpInside];
+
+    for (UIGestureRecognizer *recognizer in [globalMagicBtn.gestureRecognizers copy]) {
+        [globalMagicBtn removeGestureRecognizer:recognizer];
+    }
+
+    UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+    [globalMagicBtn addGestureRecognizer:panGesture];
+
+    UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
+    longPress.minimumPressDuration = 0.5;
+    [globalMagicBtn addGestureRecognizer:longPress];
 }
 
 %new
 -(void)handlePan:(UIPanGestureRecognizer *)sender {
     UIView *button = sender.view;
-    CGPoint translation = [sender translationInView:button.superview];
-    button.center = CGPointMake(button.center.x + translation.x, button.center.y + translation.y);
+    UIView *container = button.superview;
+    CGPoint translation = [sender translationInView:container];
+    CGPoint center = CGPointMake(button.center.x + translation.x, button.center.y + translation.y);
+    CGFloat halfWidth = CGRectGetWidth(button.bounds) / 2.0;
+    CGFloat halfHeight = CGRectGetHeight(button.bounds) / 2.0;
+    center.x = MIN(MAX(center.x, halfWidth + 8.0), CGRectGetWidth(container.bounds) - halfWidth - 8.0);
+    center.y = MIN(MAX(center.y, halfHeight + 8.0), CGRectGetHeight(container.bounds) - halfHeight - 8.0);
+    button.center = center;
     [sender setTranslation:CGPointZero inView:button.superview];
 }
 
 %new
 -(void)toggleCameraMode:(UIButton *)sender {
-    useRearCamera = !useRearCamera;
+    if (!currentSession) return;
 
-    if (useRearCamera) {
-        [UIView animateWithDuration:0.2 animations:^{
-            sender.backgroundColor = [UIColor colorWithRed:0.0 green:0.8 blue:0.4 alpha:0.8];
-            sender.transform = CGAffineTransformMakeScale(1.1, 1.1);
-        } completion:^(BOOL finished) {
-            [UIView animateWithDuration:0.1 animations:^{
-                sender.transform = CGAffineTransformIdentity;
-            }];
-        }];
-        [sender setTitle:@"📸" forState:UIControlStateNormal];
-    } else {
-        [UIView animateWithDuration:0.2 animations:^{
-            sender.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.7];
-            sender.transform = CGAffineTransformMakeScale(0.9, 0.9);
-        } completion:^(BOOL finished) {
-            [UIView animateWithDuration:0.1 animations:^{
-                sender.transform = CGAffineTransformIdentity;
-            }];
-        }];
-        [sender setTitle:@"🤳" forState:UIControlStateNormal];
+    AVCaptureDevicePosition currentPosition = useRearCamera ? AVCaptureDevicePositionBack : AVCaptureDevicePositionFront;
+    for (AVCaptureInput *input in currentSession.inputs) {
+        if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
+            AVCaptureDevice *device = ((AVCaptureDeviceInput *)input).device;
+            if ([device hasMediaType:AVMediaTypeVideo]) {
+                currentPosition = device.position;
+                break;
+            }
+        }
+    }
+    AVCaptureDevicePosition targetPosition = currentPosition == AVCaptureDevicePositionBack
+        ? AVCaptureDevicePositionFront : AVCaptureDevicePositionBack;
+    AVCaptureDevice *newDevice = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera
+                                                                    mediaType:AVMediaTypeVideo
+                                                                     position:targetPosition];
+    if (!newDevice) return;
+
+    NSError *inputError = nil;
+    AVCaptureDeviceInput *newInput = [AVCaptureDeviceInput deviceInputWithDevice:newDevice error:&inputError];
+    if (!newInput) {
+        NSLog(@"[AzarMagicButton] 無法建立相機輸入：%@", inputError);
+        return;
     }
 
-    if (currentSession) {
-        @try {
-            [currentSession beginConfiguration];
-            
-            // 移除舊輸入
-            for (AVCaptureInput *input in currentSession.inputs) {
-                if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
-                    AVCaptureDeviceInput *deviceInput = (AVCaptureDeviceInput *)input;
-                    if ([deviceInput.device hasMediaType:AVMediaTypeVideo]) {
-                        [currentSession removeInput:input];
-                    }
-                }
+    AVCaptureDeviceInput *oldVideoInput = nil;
+    for (AVCaptureInput *input in currentSession.inputs) {
+        if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
+            AVCaptureDeviceInput *deviceInput = (AVCaptureDeviceInput *)input;
+            if ([deviceInput.device hasMediaType:AVMediaTypeVideo]) {
+                oldVideoInput = deviceInput;
+                break;
             }
-            
-            // 準備新輸入
-            AVCaptureDevicePosition targetPos = useRearCamera ? AVCaptureDevicePositionBack : AVCaptureDevicePositionFront;
-            AVCaptureDevice *newDevice = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera 
-                                                                            mediaType:AVMediaTypeVideo 
-                                                                             position:targetPos];
-            
-            // 🔥🔥 美顏/補光核心：調整曝光補償 (Exposure Target Bias) 🔥🔥
-            if (newDevice) {
-                NSError *lockError = nil;
-                // 必須先鎖定設備才能修改參數
-                if ([newDevice lockForConfiguration:&lockError]) {
-                    
-                    // 這裡的數值範圍通常是 -8.0 到 8.0
-                    // 0 是正常，+1 是稍亮
-                    // +2.0 是明顯增亮 (類似打光效果)
-                    float brightnessValue = beautyExposure; 
-                    
-                    [newDevice setExposureTargetBias:brightnessValue completionHandler:nil];
-                    
-                    // 如果有低光增強模式，根據設定開啟或關閉
-                    if (newDevice.isLowLightBoostSupported) {
-                        newDevice.automaticallyEnablesLowLightBoostWhenAvailable = enableLowLight;
-                    }
+        }
+    }
 
-                    [newDevice unlockForConfiguration];
-                    NSLog(@"[AzarHack] 已開啟美顏補光模式：+2.0 EV");
-                }
-            }
+    @try {
+        [currentSession beginConfiguration];
+        if (oldVideoInput) [currentSession removeInput:oldVideoInput];
 
-            if (newDevice) {
-                NSError *err = nil;
-                AVCaptureDeviceInput *newInput = [AVCaptureDeviceInput deviceInputWithDevice:newDevice error:&err];
-                if (newInput && [currentSession canAddInput:newInput]) {
-                    [currentSession addInput:newInput];
-                }
+        if (![currentSession canAddInput:newInput]) {
+            if (oldVideoInput && [currentSession canAddInput:oldVideoInput]) {
+                [currentSession addInput:oldVideoInput];
             }
             [currentSession commitConfiguration];
-            
-            [self fixMirroring];
-            
-        } @catch (NSException *exception) {}
+            return;
+        }
+
+        [currentSession addInput:newInput];
+        [currentSession commitConfiguration];
+    } @catch (NSException *exception) {
+        @try {
+            if ([currentSession.inputs containsObject:newInput]) [currentSession removeInput:newInput];
+            if (oldVideoInput && ![currentSession.inputs containsObject:oldVideoInput] && [currentSession canAddInput:oldVideoInput]) {
+                [currentSession addInput:oldVideoInput];
+            }
+            [currentSession commitConfiguration];
+        } @catch (__unused NSException *commitException) {}
+        NSLog(@"[AzarMagicButton] 切換相機失敗：%@", exception);
+        return;
     }
+
+    useRearCamera = (targetPosition == AVCaptureDevicePositionBack);
+    [self applySettingsToDevice:newDevice];
+    [self updateCameraButton:sender];
+    [self fixMirroring];
 }
 
 %new
@@ -379,8 +305,8 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 
 %new
 -(void)showSettings {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"美顏設定" 
-                                                                   message:@"調整參數" 
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"相機設定" 
+                                                                   message:@"曝光、低光與鏡像設定" 
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
     NSString *expTitle = [NSString stringWithFormat:@"曝光補償 (目前: %.1f)", beautyExposure];
@@ -419,22 +345,9 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
         [self showSettings];
     }]];
 
-    NSString *mirrorTitle = forceMirror ? @"鏡像翻轉: ✅ 開啟" : @"鏡像翻轉: ❌ 關閉";
+    NSString *mirrorTitle = forceMirror ? @"後鏡頭鏡像: ✅ 開啟" : @"後鏡頭鏡像: ❌ 關閉";
     [alert addAction:[UIAlertAction actionWithTitle:mirrorTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         forceMirror = !forceMirror;
-        [self fixMirroring];
-        [self showSettings];
-    }]];
-    
-    NSString *audioTitle = enableAudioFix ? @"音訊錄製優化: ✅ 開啟" : @"音訊錄製優化: ❌ 關閉";
-    [alert addAction:[UIAlertAction actionWithTitle:audioTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        enableAudioFix = !enableAudioFix;
-        [self showSettings];
-    }]];
-    
-    NSString *layerFlipTitle = enableLayerFlip ? @"圖層翻轉: ✅ 開啟" : @"圖層翻轉: ❌ 關閉";
-    [alert addAction:[UIAlertAction actionWithTitle:layerFlipTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        enableLayerFlip = !enableLayerFlip;
         [self fixMirroring];
         [self showSettings];
     }]];
@@ -452,75 +365,91 @@ static BOOL enableLayerFlip = YES; // 強制圖層翻轉
 %new
 -(void)updateCameraSettings {
     if (!currentSession) return;
-    
+
     for (AVCaptureInput *input in currentSession.inputs) {
         if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
             AVCaptureDeviceInput *devInput = (AVCaptureDeviceInput *)input;
             AVCaptureDevice *device = devInput.device;
-            
             if ([device hasMediaType:AVMediaTypeVideo]) {
-                NSError *error = nil;
-                if ([device lockForConfiguration:&error]) {
-                    [device setExposureTargetBias:beautyExposure completionHandler:nil];
-                    if (device.isLowLightBoostSupported) {
-                        device.automaticallyEnablesLowLightBoostWhenAvailable = enableLowLight;
-                    }
-                    [device unlockForConfiguration];
-                }
+                [self applySettingsToDevice:device];
             }
         }
+    }
+}
+
+%new
+-(void)applySettingsToDevice:(AVCaptureDevice *)device {
+    if (!device || ![device hasMediaType:AVMediaTypeVideo]) return;
+
+    NSError *error = nil;
+    if (![device lockForConfiguration:&error]) {
+        NSLog(@"[AzarMagicButton] 無法套用相機設定：%@", error);
+        return;
+    }
+
+    @try {
+        float exposure = MIN(MAX(beautyExposure, device.minExposureTargetBias), device.maxExposureTargetBias);
+        [device setExposureTargetBias:exposure completionHandler:nil];
+        if (device.isLowLightBoostSupported) {
+            device.automaticallyEnablesLowLightBoostWhenAvailable = enableLowLight;
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"[AzarMagicButton] 套用相機設定失敗：%@", exception);
+    } @finally {
+        [device unlockForConfiguration];
     }
 }
 
 %new
 -(void)fixMirroring {
-    if (!useRearCamera) return;
-    
-    if (currentSession) {
-        for (AVCaptureOutput *output in currentSession.outputs) {
-            for (AVCaptureConnection *connection in output.connections) {
-                if (connection.isVideoMirroringSupported) {
+    [self updatePreviewLayersInLayer:self.view.layer];
+}
+
+%new
+-(void)updatePreviewLayersInLayer:(CALayer *)layer {
+    if ([layer isKindOfClass:[AVCaptureVideoPreviewLayer class]]) {
+        AVCaptureVideoPreviewLayer *previewLayer = (AVCaptureVideoPreviewLayer *)layer;
+        if (previewLayer.session == currentSession) {
+            AVCaptureConnection *connection = previewLayer.connection;
+            if (connection.isVideoMirroringSupported) {
+                if (useRearCamera) {
+                    connection.automaticallyAdjustsVideoMirroring = NO;
                     connection.videoMirrored = forceMirror;
+                } else {
+                    connection.automaticallyAdjustsVideoMirroring = YES;
                 }
             }
         }
     }
-    
-    // Fix Preview Layer
-    [self checkLayer:((UIViewController *)self).view.layer];
+
+    for (CALayer *subLayer in layer.sublayers) {
+        [self updatePreviewLayersInLayer:subLayer];
+    }
 }
 
 %new
--(void)checkLayer:(CALayer *)layer {
-    BOOL isVideoLayer = [layer isKindOfClass:[AVCaptureVideoPreviewLayer class]];
-    if (!isVideoLayer && NSClassFromString(@"AVSampleBufferDisplayLayer")) {
-        isVideoLayer = [layer isKindOfClass:NSClassFromString(@"AVSampleBufferDisplayLayer")];
-    }
-    if (!isVideoLayer && NSClassFromString(@"CAEAGLLayer")) {
-        isVideoLayer = [layer isKindOfClass:NSClassFromString(@"CAEAGLLayer")];
-    }
-    if (!isVideoLayer && NSClassFromString(@"CAMetalLayer")) {
-        isVideoLayer = [layer isKindOfClass:NSClassFromString(@"CAMetalLayer")];
-    }
+-(void)updateCameraButton:(UIButton *)button {
+    if (!button) return;
+    [button setTitle:(useRearCamera ? @"📸" : @"🤳") forState:UIControlStateNormal];
+    button.backgroundColor = useRearCamera
+        ? [UIColor colorWithRed:0.0 green:0.8 blue:0.4 alpha:0.8]
+        : [UIColor colorWithWhite:0.1 alpha:0.7];
+}
 
-    if (isVideoLayer) {
-        if ([layer isKindOfClass:[AVCaptureVideoPreviewLayer class]]) {
-            AVCaptureVideoPreviewLayer *previewLayer = (AVCaptureVideoPreviewLayer *)layer;
-            if (previewLayer.connection.isVideoMirroringSupported) {
-                previewLayer.connection.videoMirrored = forceMirror;
+%new
+-(void)syncCameraButtonWithSession {
+    if (!currentSession || !globalMagicBtn) return;
+
+    for (AVCaptureInput *input in currentSession.inputs) {
+        if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
+            AVCaptureDevice *device = ((AVCaptureDeviceInput *)input).device;
+            if ([device hasMediaType:AVMediaTypeVideo]) {
+                useRearCamera = device.position == AVCaptureDevicePositionBack;
+                [self updateCameraButton:globalMagicBtn];
+                [self applySettingsToDevice:device];
+                [self fixMirroring];
+                return;
             }
-        }
-        
-        if (enableLayerFlip) {
-            layer.transform = CATransform3DMakeScale(-1.0, 1.0, 1.0);
-        } else {
-            layer.transform = CATransform3DIdentity;
-        }
-    }
-    
-    if (layer.sublayers) {
-        for (CALayer *sub in layer.sublayers) {
-            [self checkLayer:sub];
         }
     }
 }
